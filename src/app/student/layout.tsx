@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/student/analytics", label: "تحليلاتي" },
   { href: "/student/exams", label: "الامتحانات" },
   { href: "/student/saved-moments", label: "لحظاتي المحفوظة" },
+  { href: "/student/parent-requests", label: "طلبات أولياء الأمور" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];

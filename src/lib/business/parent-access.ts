@@ -29,4 +29,7 @@ export async function assertParentCanAccessStudent(
   if (!link) {
     throw new ForbiddenError("This parent is not linked to the given student");
   }
+  if (!link.approvedAt) {
+    throw new ForbiddenError("This parent-student link has not been approved yet");
+  }
 }

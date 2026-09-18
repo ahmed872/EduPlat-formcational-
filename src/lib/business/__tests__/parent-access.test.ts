@@ -9,11 +9,11 @@ beforeEach(async () => {
 });
 
 describe("parent-student access control", () => {
-  it("allows a parent to access their connected student", async () => {
+  it("allows a parent to access their connected, approved student", async () => {
     const parent = await createParent();
     const student = await createStudent();
     await prisma.parentStudent.create({
-      data: { parentId: parent.id, studentId: student.id },
+      data: { parentId: parent.id, studentId: student.id, approvedAt: new Date() },
     });
 
     const parentUser = await prisma.user.findUniqueOrThrow({
@@ -26,6 +26,25 @@ describe("parent-student access control", () => {
         studentProfileId: student.id,
       }),
     ).resolves.not.toThrow();
+  });
+
+  it("blocks a parent whose link exists but has not been approved by the student yet", async () => {
+    const parent = await createParent();
+    const student = await createStudent();
+    await prisma.parentStudent.create({
+      data: { parentId: parent.id, studentId: student.id }, // approvedAt left null
+    });
+
+    const parentUser = await prisma.user.findUniqueOrThrow({
+      where: { id: parent.userId },
+    });
+
+    await expect(
+      assertParentCanAccessStudent(prisma, {
+        parentUserId: parentUser.id,
+        studentProfileId: student.id,
+      }),
+    ).rejects.toThrow(/not been approved/i);
   });
 
   it("blocks a parent from accessing an unrelated student", async () => {

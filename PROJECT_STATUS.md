@@ -1,16 +1,17 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 8 session)
+Last updated: 2026-09-18 (Phase 9 session)
 
 ## Current phase
 
-Phase 8 (Student Analytics) is complete, on top of Phase 7 (Interactive
-Experiments), Phase 6 (Question Bank & Exams), Phase 5 (Student Learning
-Features), Phase 4 (Shorts & Timestamp System), Phase 3 (Video Storage &
-Secure Playback), Phase 2 (Subscription & Payment System), and the Phase-1
-foundation (Foundation → Auth/Roles → Database → Teacher CMS →
-Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
-→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
+Phase 9 (Parent System) is complete, on top of Phase 8 (Student
+Analytics), Phase 7 (Interactive Experiments), Phase 6 (Question Bank &
+Exams), Phase 5 (Student Learning Features), Phase 4 (Shorts & Timestamp
+System), Phase 3 (Video Storage & Secure Playback), Phase 2 (Subscription
+& Payment System), and the Phase-1 foundation (Foundation → Auth/Roles →
+Database → Teacher CMS → Courses/Lessons/Videos → Video access/security →
+Subscriptions/Entitlements → Student dashboard → Progress/Timer →
+Quizzes/Unlocking).
 
 ## Completed features
 
@@ -133,8 +134,9 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   identity watermark overlay.
 
 ### Parent dashboard
-- Lists linked children (via `ParentStudent`) with aggregate study time and
-  streak. No access to paid course content, per spec.
+- Lists approved linked children (via `ParentStudent`) with aggregate
+  study time and streak. No access to paid course content, per spec. See
+  Phase 9 below for self-service linking and per-child analytics.
 
 ### Subscriptions & payments (Phase 2 — new this session)
 - **Student** (`/student/subscribe`): browse active plans (with the
@@ -377,14 +379,47 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   paid subscription or admin-granted entitlement involved anywhere in the
   flow.
 
+### Parent system (Phase 9 — new this session)
+- **Self-service linking** (`src/lib/business/parent-link.ts`): a parent
+  requests a link by the student's account email
+  (`requestParentLink()`); the student sees the pending request on
+  `/student/parent-requests` and must explicitly approve or reject it
+  (`approveParentLink()` / `rejectParentLink()`, both ownership-checked so
+  a student can only act on their own requests). A parent's dashboard
+  (`/parent`) shows pending requests separately from approved children,
+  and only an approved child gets a link to their analytics.
+- **Real, security-relevant bug found and fixed before commit**:
+  `ParentStudent.approvedAt` existed in the schema since Foundation but
+  `assertParentCanAccessStudent()` never checked it — any `ParentStudent`
+  row, however it was created, granted full access. This was latent but
+  harmless while linking required a teacher/admin to create the row by
+  hand; it would have become a real hole the moment self-service
+  requesting existed, since a parent could otherwise grant themselves
+  access to any student merely by requesting it. Fixed by requiring
+  `approvedAt !== null`. This changed the meaning of an existing test
+  (updated to construct an explicitly-approved link) and added a new test
+  for the pending-link-must-not-grant-access case.
+- **Parent-facing analytics** (`/parent/students/[studentId]/analytics`):
+  read-only, reuses `getStudentOverallAnalytics()` from Phase 8, gated by
+  `assertParentCanAccessStudent()` — an unrelated or not-yet-approved
+  parent gets a 404, not an error page that leaks the student's
+  existence.
+- 8 new/updated tests across `parent-link.test.ts` (new) and
+  `parent-access.test.ts` (updated + one new case); 93/93 passing overall.
+  Verified end-to-end in a real browser: a parent requests a link, cannot
+  see any analytics link for that child yet, the student approves it from
+  their own account, the parent then sees the child and their real
+  progress data, and — as a direct security check — a second, unrelated
+  parent hitting the exact same analytics URL by hand gets a 404.
+
 ## Not started (by priority order, all schema-ready)
 
-Parent-facing analytics/reports, monthly parent PDF reports, email/push
-notification delivery, announcements UI, mini/daily games + leaderboards +
-Hall of Fame, achievements engine, career guidance content + exploration
-quiz, certificates + public verification page, referral system UI, support
-ticket UI, store/checkout, real payment gateway integration, audit-log UI,
-rate limiting, concurrent-session detection, HLS/DRM, search.
+Monthly parent PDF reports, email/push notification delivery, announcements
+UI, mini/daily games + leaderboards + Hall of Fame, achievements engine,
+career guidance content + exploration quiz, certificates + public
+verification page, referral system UI, support ticket UI, store/checkout,
+real payment gateway integration, audit-log UI, rate limiting,
+concurrent-session detection, HLS/DRM, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -399,10 +434,9 @@ rate limiting, concurrent-session detection, HLS/DRM, search.
    Both need a real media pipeline/provider not available here.
 3. **Video duration is teacher-entered**, not auto-detected — no
    `ffprobe`/media-probing tool is available in this environment.
-4. **Parent↔student linking has no self-service UI yet** — the schema and
-   access-control logic exist and are tested, but a parent currently needs
-   the row created directly (e.g. by the teacher/admin) rather than through
-   a request/approve flow in the product.
+4. ~~Parent↔student linking has no self-service UI yet~~ — **fixed in
+   Phase 9**: a parent can now request a link by email and a student
+   approves/rejects it from their own account.
 5. **`syncExpiredSubscriptions()` runs opportunistically on page load**
    (student/teacher subscription pages), not on a real schedule — a cron
    job or queue worker is the eventual home for it. Access control does not
@@ -440,11 +474,20 @@ rate limiting, concurrent-session detection, HLS/DRM, search.
 13. **No teacher-facing trend charts over time** — analytics are current
     snapshots (as of the page load), not a history of how a student's or
     course's numbers changed week over week.
+14. **A parent-student link request has no expiry or notification** — a
+    pending request sits on the student's `/student/parent-requests` page
+    indefinitely until they act on it; there is no reminder, email, or
+    in-app `Notification` triggered when a request arrives.
+15. **A parent can request a link to any student whose email they know** —
+    by design (this is how self-service linking has to start), but there
+    is no rate limiting on request attempts, so a malicious actor could in
+    theory spam requests at a student (each one still requires that
+    student's explicit approval to grant anything).
 
 ## Test status
 
 ```
-npx vitest run       # 84/84 passing (14 files)
+npx vitest run       # 93/93 passing (15 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -473,11 +516,11 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 9 — Parent System: self-service parent↔student linking (currently
-requires a teacher/admin to create the `ParentStudent` row directly — see
-known gap above), and parent-facing analytics/reports building on
-`src/lib/business/analytics.ts` from Phase 8 (a parent should see the same
-kind of per-course progress their linked child sees, scoped to read-only,
-per the existing parent-access-control rules). Inspect the exact current
-schema/state at the start of the phase before building. Do not restart or
-re-architect what exists above — extend it.
+Phase 10 — Reports: build on `ParentReport` (schema exists, unused) and
+`src/lib/business/analytics.ts` (Phase 8) to generate periodic (e.g.
+monthly) progress reports for parents and teachers — this is the natural
+next layer on top of Phase 9's now-working parent linking, since a report
+needs the same real progress data the live analytics pages already
+compute, just persisted as a point-in-time snapshot. Inspect the exact
+current schema/state at the start of the phase before building. Do not
+restart or re-architect what exists above — extend it.
