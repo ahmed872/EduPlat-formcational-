@@ -1,16 +1,16 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 7 session)
+Last updated: 2026-09-18 (Phase 8 session)
 
 ## Current phase
 
-Phase 7 (Interactive Experiments) is complete, on top of Phase 6 (Question
-Bank & Exams), Phase 5 (Student Learning Features), Phase 4 (Shorts &
-Timestamp System), Phase 3 (Video Storage & Secure Playback), Phase 2
-(Subscription & Payment System), and the Phase-1 foundation (Foundation →
-Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
-access/security → Subscriptions/Entitlements → Student dashboard →
-Progress/Timer → Quizzes/Unlocking).
+Phase 8 (Student Analytics) is complete, on top of Phase 7 (Interactive
+Experiments), Phase 6 (Question Bank & Exams), Phase 5 (Student Learning
+Features), Phase 4 (Shorts & Timestamp System), Phase 3 (Video Storage &
+Secure Playback), Phase 2 (Subscription & Payment System), and the Phase-1
+foundation (Foundation → Auth/Roles → Database → Teacher CMS →
+Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
+→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -344,9 +344,42 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   takes and passes the quiz, confirming the full gate (experiment →
   unlock → quiz) is enforced for real, not just displayed.
 
+### Student analytics (Phase 8 — new this session)
+- **Business logic** (`src/lib/business/analytics.ts`), all computed from
+  real rows (no cached/derived-only fields that could drift):
+  `getStudentCourseAnalytics()` (lessons total/completed, completion %,
+  quizzes taken/passed, average quiz %, quiz pass rate for one student in
+  one course), `getStudentOverallAnalytics()` (the same, aggregated across
+  every course a student has touched, plus total study time and completed
+  experiments), and `getCourseAnalyticsForTeacher()` (enrolled-student
+  count, a per-lesson completion funnel revealing drop-off points, and a
+  per-student breakdown table).
+- **Student page** (`/student/analytics`): total study time, lessons
+  completed, quizzes passed, experiments completed, and a progress bar +
+  quiz averages per course.
+- **Teacher pages** (`/teacher/analytics`, `/teacher/analytics/[courseId]`):
+  a course list with headline stats, drilling into per-lesson completion
+  bars and a per-student table (completion % and average quiz score).
+- **Real bug found and fixed before commit**: a free lesson never creates
+  an `Entitlement` row (see `checkVideoAccess`'s `FREE_VIDEO` bypass —
+  already known from Phase 5's dashboard fix), so a student who only ever
+  watched free content, or a course reached only through free lessons,
+  would have been invisible in both the student's own analytics and the
+  teacher's per-course analytics despite genuine engagement. Both
+  functions now also derive their course/student sets from `WatchSession`
+  rows, not `Entitlement` alone. Covered by two dedicated regression
+  tests (one per function).
+- 8 new tests (`analytics.test.ts`); 84/84 passing overall. Verified
+  end-to-end in a real browser: teacher publishes a free lesson with a
+  video, a student watches it, the student's own `/student/analytics`
+  shows the course, and the teacher's `/teacher/analytics/[courseId]`
+  shows that same student as enrolled with real completion data — with no
+  paid subscription or admin-granted entitlement involved anywhere in the
+  flow.
+
 ## Not started (by priority order, all schema-ready)
 
-Teacher analytics dashboards, monthly parent PDF reports, email/push
+Parent-facing analytics/reports, monthly parent PDF reports, email/push
 notification delivery, announcements UI, mini/daily games + leaderboards +
 Hall of Fame, achievements engine, career guidance content + exploration
 quiz, certificates + public verification page, referral system UI, support
@@ -399,11 +432,19 @@ rate limiting, concurrent-session detection, HLS/DRM, search.
 11. **Experiment ordering is by creation order only** — there is no
     drag-to-reorder UI; a teacher who needs a specific order must delete
     and recreate experiments in the desired sequence.
+12. **"Enrolled" in analytics means "has an Entitlement or WatchSession for
+    this course"**, not "has an active paid subscription" — this is
+    intentional (see the Phase 8 free-lesson bug fix above), but it does
+    mean a student who watched one free lesson and never returns still
+    counts as "enrolled" indefinitely; there is no notion of unenrolling.
+13. **No teacher-facing trend charts over time** — analytics are current
+    snapshots (as of the page load), not a history of how a student's or
+    course's numbers changed week over week.
 
 ## Test status
 
 ```
-npx vitest run       # 76/76 passing (13 files)
+npx vitest run       # 84/84 passing (14 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -432,9 +473,11 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 8 — Student Analytics: teacher-facing analytics dashboards (per
-student, per course, per exam) and student-facing progress/analytics
-views beyond what already exists (study-time summaries, exam analytics
-per quiz from Phase 6). Inspect the exact current schema/state at the
-start of the phase before building. Do not restart or re-architect what
-exists above — extend it.
+Phase 9 — Parent System: self-service parent↔student linking (currently
+requires a teacher/admin to create the `ParentStudent` row directly — see
+known gap above), and parent-facing analytics/reports building on
+`src/lib/business/analytics.ts` from Phase 8 (a parent should see the same
+kind of per-course progress their linked child sees, scoped to read-only,
+per the existing parent-access-control rules). Inspect the exact current
+schema/state at the start of the phase before building. Do not restart or
+re-architect what exists above — extend it.

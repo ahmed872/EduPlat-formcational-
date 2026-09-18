@@ -5,6 +5,7 @@ import { auth, signOut } from "@/auth";
 
 const NAV_ITEMS = [
   { href: "/teacher", label: "لوحة التحكم" },
+  { href: "/teacher/analytics", label: "التحليلات" },
   { href: "/teacher/categories", label: "الأقسام" },
   { href: "/teacher/courses", label: "الكورسات" },
   { href: "/teacher/shorts", label: "Shorts" },
