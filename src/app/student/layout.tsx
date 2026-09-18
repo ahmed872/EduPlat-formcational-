@@ -5,6 +5,8 @@ import { auth, signOut } from "@/auth";
 
 const NAV_ITEMS = [
   { href: "/student", label: "لوحة التحكم" },
+  { href: "/student/subscribe", label: "الاشتراك" },
+  { href: "/student/payments", label: "سجل المدفوعات" },
 ];
 
 export default async function StudentLayout({

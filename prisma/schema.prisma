@@ -209,6 +209,7 @@ model Lesson {
   feedback          LessonFeedback[]
   subscriptionItems SubscriptionPlanItem[]
   entitlements      Entitlement[]
+  promoApplicable   PromoApplicableContent[]
 
   @@index([courseId])
   @@index([status])
@@ -519,6 +520,7 @@ model SubscriptionPlanItem {
 }
 
 enum SubscriptionStatus {
+  PENDING_PAYMENT
   ACTIVE
   EXPIRED
   CANCELLED
@@ -530,9 +532,12 @@ model Subscription {
   student     StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
   planId      String
   plan        SubscriptionPlan   @relation(fields: [planId], references: [id])
+  promoCodeId String?
+  promoCode   PromoCode?         @relation(fields: [promoCodeId], references: [id])
   purchasedAt DateTime           @default(now())
   expiresAt   DateTime // defaults to academic-year end per platform settings, not +1 month
-  status      SubscriptionStatus @default(ACTIVE)
+  status      SubscriptionStatus @default(PENDING_PAYMENT)
+  cancelledAt DateTime?
 
   payments     Payment[]
   entitlements Entitlement[]
@@ -551,18 +556,22 @@ enum EntitlementReason {
 // access checks MUST consult this table, never infer access from an active
 // subscription alone.
 model Entitlement {
-  id             String            @id @default(cuid())
-  studentId      String
-  student        StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  subscriptionId String?
-  subscription   Subscription?     @relation(fields: [subscriptionId], references: [id])
-  lessonId       String?
-  lesson         Lesson?           @relation(fields: [lessonId], references: [id])
-  videoId        String?
-  video          Video?            @relation(fields: [videoId], references: [id])
-  reason         EntitlementReason
-  grantedAt      DateTime          @default(now())
-  revokedAt      DateTime?
+  id                String            @id @default(cuid())
+  studentId         String
+  student           StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subscriptionId    String?
+  subscription      Subscription?     @relation(fields: [subscriptionId], references: [id])
+  promoRedemptionId String?
+  promoRedemption   PromoRedemption?  @relation(fields: [promoRedemptionId], references: [id])
+  lessonId          String?
+  lesson            Lesson?           @relation(fields: [lessonId], references: [id])
+  videoId           String?
+  video             Video?            @relation(fields: [videoId], references: [id])
+  reason            EntitlementReason
+  grantedById       String? // set when reason = ADMIN_GRANT
+  grantedAt         DateTime          @default(now())
+  expiresAt         DateTime? // only meaningful for non-subscription grants (PROMO FREE_PERIOD / time-boxed ADMIN_GRANT); subscription-backed grants rely on Subscription.expiresAt instead
+  revokedAt         DateTime?
 
   @@index([studentId, videoId])
   @@index([studentId, lessonId])
@@ -579,18 +588,24 @@ enum PaymentStatus {
 // gateway integration fills in `provider` and `providerRef` and MUST verify
 // status server-side via webhook/callback before marking SUCCEEDED.
 model Payment {
-  id             String        @id @default(cuid())
-  subscriptionId String
-  subscription   Subscription  @relation(fields: [subscriptionId], references: [id])
-  amountCents    Int
-  currency       String
-  provider       String?
-  providerRef    String?
-  status         PaymentStatus @default(PENDING)
-  createdAt      DateTime      @default(now())
-  verifiedAt     DateTime?
+  id                  String        @id @default(cuid())
+  subscriptionId      String
+  subscription        Subscription  @relation(fields: [subscriptionId], references: [id])
+  amountCents         Int
+  originalAmountCents Int // pre-discount amount, kept for reporting even when a promo zeroes the charge
+  currency            String
+  provider            String? // e.g. "MANUAL_OFFLINE" today; "STRIPE"/"PAYMOB"/... once a real gateway is wired
+  providerRef         String?
+  method              String? // free-text for manual/offline reconciliation, e.g. "CASH", "BANK_TRANSFER"
+  notes               String?
+  status              PaymentStatus @default(PENDING)
+  createdAt           DateTime      @default(now())
+  verifiedAt          DateTime?
+  confirmedById       String? // teacher/admin who manually confirmed receipt, when applicable
+  failureReason       String?
 
   @@index([subscriptionId])
+  @@index([status])
 }
 
 // =========================================================================
@@ -824,6 +839,7 @@ model PromoCode {
 
   applicableContent PromoApplicableContent[]
   redemptions       PromoRedemption[]
+  subscriptions     Subscription[]
 }
 
 model PromoApplicableContent {
@@ -832,6 +848,8 @@ model PromoApplicableContent {
   promo    PromoCode @relation(fields: [promoId], references: [id], onDelete: Cascade)
   courseId String?
   course   Course?   @relation(fields: [courseId], references: [id])
+  lessonId String?
+  lesson   Lesson?   @relation(fields: [lessonId], references: [id])
 
   @@index([promoId])
 }
@@ -843,6 +861,8 @@ model PromoRedemption {
   studentId  String
   student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
   redeemedAt DateTime       @default(now())
+
+  entitlements Entitlement[]
 
   @@unique([promoId, studentId])
 }

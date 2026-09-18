@@ -87,11 +87,59 @@ system are fully implemented and tested; only the "hand the browser a
 playable, signed, expiring URL" step is a stub, honestly labeled as such on
 the watch page (see PROJECT_STATUS.md → Known gaps).
 
-## Payments (intentionally not implemented yet)
+## Subscriptions & payments (Phase 2)
 
-The `Payment` model is provider-agnostic (`provider`, `providerRef`,
-`status`) by design — no gateway is wired up, and nothing fakes a
-successful payment. `PromoCode`/`PromoRedemption` and the discount math in
-`applyDiscount()` are implemented and tested independently of any payment
-provider, since promo logic and payment-provider integration are separable
-concerns.
+`src/lib/business/subscription.ts` is the checkout/payment state machine;
+`src/lib/payments/provider.ts` is the payment-gateway abstraction.
+
+**Checkout** (`startSubscriptionCheckout`): validates the plan, validates
+and redeems an optional promo code (`promo-code.ts`), computes the final
+price (`applyDiscount`), asks `getActivePaymentProvider(amountCents)` for an
+intent, then creates the `Subscription` + `Payment` rows. A zero-amount
+intent (either a free plan or a `FREE_100` promo) resolves synchronously to
+`SUCCEEDED`/`ACTIVE` and grants entitlements immediately — there is
+genuinely nothing to collect, so this is not "faking" a payment. Any
+non-zero amount always starts `PENDING_PAYMENT`/`PENDING` and grants
+**nothing** until a human confirms it.
+
+**Payment provider abstraction**: `PaymentProvider` has one method,
+`createIntent()`. `FreePaymentProvider` handles amount = 0.
+`ManualOfflinePaymentProvider` — the only paid-amount implementation today
+— always returns `PENDING` with human-readable transfer instructions; it
+is explicitly not a real gateway. Wiring one in (Stripe, PayMob, Fawry, ...)
+means writing a class that implements `createIntent()` against that
+provider's API and changing `getActivePaymentProvider()` to return it for
+non-zero amounts — no other code in the checkout flow needs to change.
+
+**Payment states**: `PENDING → SUCCEEDED | FAILED`, and `SUCCEEDED →
+REFUNDED`. Every transition away from `PENDING`/`SUCCEEDED` is a named
+function (`confirmPayment`, `rejectPayment`, `refundPayment`) that a
+teacher/admin calls explicitly; each writes an `AuditLog` row. `confirmPayment`
+is the *only* code path in the entire codebase that can mark a non-zero
+payment `SUCCEEDED`, and it does so by calling `grantEntitlementsForSubscription`
+— the same entitlement-snapshotting function Phase 1 already tested, so a
+confirmed paid subscription behaves identically to the free-checkout case
+regarding "no future content leaks in".
+
+**Free content outside any subscription**: `FREE_LESSON`/`FREE_PACKAGE`/
+`FREE_PERIOD` promo codes are redeemed via `redeemFreeContentPromo()`,
+which grants `Entitlement` rows sourced from `PromoApplicableContent`
+(`grantEntitlementsForPromoRedemption`) with `reason: PROMO` and no
+`subscriptionId` at all — these are genuinely independent of the
+subscription system. `FREE_PERIOD` is the one type that sets
+`Entitlement.expiresAt` (bounded to the academic-year end); the others are
+permanent grants.
+
+**The admin escape hatch**: `grantAdminEntitlement()` creates a single,
+audited (`grantedById`) `Entitlement` for one lesson/student pair, for the
+case in spec section 8 where a teacher wants to manually unlock one
+specific piece of content published after a student's purchase window,
+without issuing a whole new subscription.
+
+**Reporting-only expiry sync**: `syncExpiredSubscriptions()` flips
+`ACTIVE` rows past their `expiresAt` to `EXPIRED` so dashboards display the
+truth. This is *not* what makes access control correct — `checkVideoAccess`
+already re-evaluates `expiresAt` on every check regardless of the stored
+`status` — it only exists so a human reading the subscription list doesn't
+see a lie. It runs opportunistically on page load today; a real scheduler
+is future work (see PROJECT_STATUS.md).

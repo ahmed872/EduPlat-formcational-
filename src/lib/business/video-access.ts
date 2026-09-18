@@ -55,8 +55,12 @@ export async function checkVideoAccess(
       videoId: params.videoId,
       revokedAt: null,
       OR: [
-        { subscriptionId: null }, // FREE / PROMO / ADMIN_GRANT entitlements never expire on their own
-        { subscription: { status: "ACTIVE", expiresAt: { gt: now } } },
+        // Subscription-backed grant: valid while the subscription itself is active and unexpired.
+        { subscriptionId: { not: null }, subscription: { status: "ACTIVE", expiresAt: { gt: now } } },
+        // Standalone grant (PROMO/FREE/ADMIN_GRANT) with no expiry — permanent.
+        { subscriptionId: null, expiresAt: null },
+        // Standalone grant with a time-boxed expiry (e.g. a FREE_PERIOD promo).
+        { subscriptionId: null, expiresAt: { gt: now } },
       ],
     },
   });
@@ -200,6 +204,88 @@ export async function grantEntitlementsForSubscription(
           lessonId: lesson.id,
           videoId: lesson.video?.id,
           reason: "SUBSCRIPTION",
+        },
+      }),
+    ),
+  );
+
+  return lessonIds.size;
+}
+
+/**
+ * A single, explicit, human-authorized grant for one lesson — the escape
+ * hatch when content published after a student's subscription window needs
+ * to reach them without a whole new subscription (e.g. a teacher manually
+ * unlocking a bonus lesson). Every grant records who did it and why.
+ */
+export async function grantAdminEntitlement(
+  prisma: PrismaClient,
+  params: {
+    studentId: string;
+    lessonId: string;
+    grantedById: string;
+    expiresAt?: Date;
+  },
+) {
+  const lesson = await prisma.lesson.findUniqueOrThrow({
+    where: { id: params.lessonId },
+    include: { video: true },
+  });
+
+  return prisma.entitlement.create({
+    data: {
+      studentId: params.studentId,
+      lessonId: lesson.id,
+      videoId: lesson.video?.id,
+      reason: "ADMIN_GRANT",
+      grantedById: params.grantedById,
+      expiresAt: params.expiresAt,
+    },
+  });
+}
+
+/**
+ * Grants entitlements sourced from a promo redemption's linked content
+ * (PromoApplicableContent), bypassing subscriptions/payments entirely —
+ * this is how FREE_LESSON / FREE_PACKAGE / FREE_PERIOD promo codes actually
+ * hand out access. `expiresAt` is left unset (permanent) unless the caller
+ * passes one (used for FREE_PERIOD, bounded to the academic year).
+ */
+export async function grantEntitlementsForPromoRedemption(
+  prisma: PrismaClient,
+  params: { promoId: string; redemptionId: string; studentId: string; expiresAt?: Date },
+) {
+  const applicable = await prisma.promoApplicableContent.findMany({
+    where: { promoId: params.promoId },
+  });
+
+  const lessonIds = new Set<string>();
+  for (const item of applicable) {
+    if (item.lessonId) lessonIds.add(item.lessonId);
+    if (item.courseId) {
+      const lessons = await prisma.lesson.findMany({
+        where: { courseId: item.courseId },
+        select: { id: true },
+      });
+      lessons.forEach((lesson) => lessonIds.add(lesson.id));
+    }
+  }
+
+  const lessons = await prisma.lesson.findMany({
+    where: { id: { in: Array.from(lessonIds) } },
+    include: { video: true },
+  });
+
+  await prisma.$transaction(
+    lessons.map((lesson) =>
+      prisma.entitlement.create({
+        data: {
+          studentId: params.studentId,
+          promoRedemptionId: params.redemptionId,
+          lessonId: lesson.id,
+          videoId: lesson.video?.id,
+          reason: "PROMO",
+          expiresAt: params.expiresAt,
         },
       }),
     ),

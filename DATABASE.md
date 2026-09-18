@@ -36,11 +36,21 @@ are applied to it automatically by Vitest's `globalSetup`.
   without needing separate tables.
 - **Commerce/access** (the most important group — see ARCHITECTURE.md):
   `SubscriptionPlan` → `SubscriptionPlanItem` (what the plan *includes*) →
-  `Subscription` (what a student *bought*) → `Entitlement` (the actual,
-  auditable per-video/lesson grant, snapshotted at purchase time) →
-  `WatchSession` (one row per playback attempt, `consumedView` +
-  `viewNumber` set only once a session crosses the configured completion
-  threshold). `Payment` is provider-agnostic and hangs off `Subscription`.
+  `Subscription` (what a student *bought*; `status` is
+  `PENDING_PAYMENT → ACTIVE → EXPIRED|CANCELLED`, optionally tagged with the
+  `PromoCode` used at checkout) → `Entitlement` (the actual, auditable
+  per-video/lesson grant, snapshotted at purchase time; `subscriptionId`
+  null for a standalone PROMO/FREE/ADMIN_GRANT, with its own optional
+  `expiresAt` for time-boxed grants like `FREE_PERIOD`, and `grantedById`
+  recorded for `ADMIN_GRANT`) → `WatchSession` (one row per playback
+  attempt, `consumedView` + `viewNumber` set only once a session crosses
+  the configured completion threshold). `Payment` is provider-agnostic
+  (`provider`/`providerRef`/`method`/`notes`/`confirmedById`/`failureReason`)
+  and hangs off `Subscription`, tracking both `originalAmountCents` (before
+  a promo discount) and the final `amountCents`. `PromoApplicableContent`
+  links a `PromoCode` to the `Course`/`Lesson`(s) it grants directly, used
+  by `FREE_LESSON`/`FREE_PACKAGE`/`FREE_PERIOD` types independently of any
+  subscription.
 - **Progress/time**: `LessonProgress` (unlock state per student/lesson),
   `StudyActivitySession` (heartbeat-accumulated active seconds, one open row
   per student+type+ref), `DailyStudyStat` (pre-aggregated per day for fast
@@ -72,8 +82,18 @@ what Prisma adds automatically for relations — e.g. `Video.status`,
 
 ## What's migrated vs. not yet
 
-One migration exists so far: `20260918144836_init`, containing the entire
-schema above. No destructive migrations have been run. Future phases (Shorts
-UI, games, career guidance content entry, etc.) will add data through this
-existing schema rather than altering it, except where a feature genuinely
-needs a new column/table.
+Three migrations exist so far, all additive (no destructive migrations have
+been run):
+- `20260918144836_init` — the entire initial schema.
+- `20260918162100_add_pending_payment_status` — adds the
+  `PENDING_PAYMENT` enum value on its own (Postgres cannot use a new enum
+  value in the same transaction that adds it, so this had to be its own
+  migration rather than bundled with the next one).
+- `20260918162302_subscription_payment_phase2` — `Subscription.promoCodeId`/`cancelledAt`,
+  `Entitlement.expiresAt`/`grantedById`/`promoRedemptionId`,
+  `Payment.originalAmountCents`/`method`/`notes`/`confirmedById`/`failureReason`,
+  `PromoApplicableContent.lessonId`.
+
+Future phases (Shorts UI, games, career guidance content entry, etc.) will
+add data through this existing schema rather than altering it, except
+where a feature genuinely needs a new column/table.

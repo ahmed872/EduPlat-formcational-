@@ -1,14 +1,14 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18
+Last updated: 2026-09-18 (Phase 2 session)
 
 ## Current phase
 
-Phase 1–10 of the priority order in the master spec (Foundation → Auth/Roles
-→ Database → Teacher CMS → Courses/Lessons/Videos → Video access/security
-→ Subscriptions/Entitlements → Student dashboard → Progress/Timer →
-Quizzes/Unlocking). This is the **first implementation session**; the
-repository started empty.
+Phase 2 (Subscription & Payment System) of the master spec's execution
+order is complete, on top of the Phase-1 foundation (Foundation →
+Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
+access/security → Subscriptions/Entitlements → Student dashboard →
+Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -37,12 +37,20 @@ repository started empty.
 - Course create/list/publish.
 - Lesson create/publish per course, with `requiredPreviousLessonId` wiring
   for sequential unlocking and a free/paid toggle.
+- Subscription plan editor (`/teacher/subscriptions`): create plans, attach
+  courses to a plan, activate/deactivate.
+- Promo code editor (`/teacher/promo-codes`): create percentage/fixed
+  discount codes and FREE_100/FREE_LESSON/FREE_PACKAGE/FREE_PERIOD codes
+  (the free types require picking a linked course), usage limits,
+  expiry, activate/deactivate, redemption count.
+- Payment confirmation queue (`/teacher/payments`): every pending
+  manual/offline payment, with one-click confirm (grants entitlements) or
+  reject (cancels the subscription), plus a recent-decisions log.
 - **Not yet built**: video upload UI, Shorts UI, chapters/notes editor,
-  experiments editor, quiz/question-bank editor, subscription-plan editor,
-  promo-code editor, announcements, settings UI. The underlying
-  business logic and schema for several of these already exist and are
-  tested (quizzes, promo codes) — only the teacher-facing forms are
-  pending.
+  experiments editor, quiz/question-bank editor, announcements, settings
+  UI. The underlying business logic and schema for several of these
+  already exist and are tested (quizzes) — only the teacher-facing forms
+  are pending.
 
 ### Core business rules (implemented AND tested against a real Postgres
 test database — no mocks)
@@ -71,8 +79,29 @@ test database — no mocks)
   **role-based guards** (`src/lib/rbac.ts`, 7 tests total across both):
   a parent can only ever read a student they are explicitly linked to; a
   student/parent calling a teacher-only or admin-only action is rejected.
+- **Subscription checkout & payment states** (`src/lib/business/subscription.ts`,
+  13 tests): a non-zero plan starts `PENDING_PAYMENT` with a `Payment` row
+  in `PENDING` and grants **no** entitlements until a teacher/admin calls
+  `confirmPayment()` (which is the only path that can mark a non-zero
+  payment `SUCCEEDED` — see "Payment provider" below); rejecting a pending
+  payment cancels the subscription; a payment cannot be confirmed twice;
+  a `FREE_100` promo code zeroes the charge and activates the subscription
+  immediately (nothing to collect, so nothing is faked); a percentage/fixed
+  discount code reduces the charge but still requires manual confirmation;
+  an expired/invalid promo code is rejected at checkout; refunding a
+  succeeded payment cancels the subscription and revokes its entitlements;
+  `FREE_LESSON`/`FREE_PACKAGE`/`FREE_PERIOD` promo codes grant entitlements
+  directly (no subscription/payment at all) via
+  `redeemFreeContentPromo()`/`grantEntitlementsForPromoRedemption()`, with
+  `FREE_PERIOD` bounded to the academic-year-end platform setting;
+  `grantAdminEntitlement()` lets a teacher explicitly unlock one lesson for
+  one student outside any subscription (the escape hatch for content
+  published after a student's purchase window); `syncExpiredSubscriptions()`
+  flips stale `ACTIVE` rows to `EXPIRED` for display (access control itself
+  never depends on this running, since `checkVideoAccess` already evaluates
+  `expiresAt` dynamically).
 
-**28/28 tests passing** (`npm test`). Full list: `src/lib/**/__tests__/*.test.ts`.
+**41/41 tests passing** (`npm test`). Full list: `src/lib/**/__tests__/*.test.ts`.
 
 ### Student dashboard
 - Daily/weekly/monthly study-time summary, current streak, weekly target
@@ -87,6 +116,27 @@ test database — no mocks)
 - Lists linked children (via `ParentStudent`) with aggregate study time and
   streak. No access to paid course content, per spec.
 
+### Subscriptions & payments (Phase 2 — new this session)
+- **Student** (`/student/subscribe`): browse active plans (with the
+  courses each one includes, shown up front), apply a promo code inline,
+  subscribe; a dedicated box to redeem a free-content code
+  (`FREE_LESSON`/`FREE_PACKAGE`/`FREE_PERIOD`) independent of any plan;
+  "اشتراكاتي" list showing each subscription's live status. `/student/payments`
+  lists every payment with its status and amount (showing the pre-discount
+  original amount when a promo reduced it).
+- **Teacher/admin**: `/teacher/subscriptions` (plans + per-plan course
+  membership), `/teacher/promo-codes` (create/list/toggle codes),
+  `/teacher/payments` (the confirm/reject queue plus history) — see above.
+- **Payment provider abstraction** (`src/lib/payments/provider.ts`): a
+  `PaymentProvider` interface with two implementations today —
+  `FreePaymentProvider` (amount = 0, nothing to collect, synchronous
+  success) and `ManualOfflinePaymentProvider` (any non-zero amount; always
+  `PENDING`, with Arabic instructions to transfer and wait for
+  confirmation). **No real gateway (Stripe/PayMob/Fawry/...) is configured
+  in this environment** — adding one means implementing `PaymentProvider`
+  and updating `getActivePaymentProvider()`; nothing else in the checkout
+  flow needs to change.
+
 ## In-progress / partially built
 
 - Video delivery: authorization + watch-session/view-limit system is fully
@@ -94,7 +144,7 @@ test database — no mocks)
   storage provider (Cloudflare Stream / Mux / S3+HLS) are **not**
   implemented — no provider has been selected/configured in this
   environment. `Video.storageProvider`/`storageKey` are designed so this
-  slots in without a schema change.
+  slots in without a schema change. (Phase 3 in the current plan.)
 
 ## Not started (by priority order, all schema-ready)
 
@@ -104,37 +154,49 @@ PDF reports, notifications delivery (in-app UI + the eventual
 email/push hook), announcements UI, mini/daily games + leaderboards + Hall
 of Fame, achievements engine, career guidance content + exploration quiz,
 certificates + public verification page, referral system UI, support
-ticket UI, store/checkout, payment provider integration, audit-log UI,
+ticket UI, store/checkout, real payment gateway integration, audit-log UI,
 rate limiting, concurrent-session detection, video watermarking, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
 1. **Video playback is not wired to a real file.** The watch page tells the
    student this explicitly rather than showing a silently broken player.
-2. **No payment provider is integrated.** `Payment.status` never becomes
-   `SUCCEEDED` without a real webhook/callback — nothing simulates a
-   successful charge.
+2. **No real payment gateway is integrated.** The abstraction exists
+   (`src/lib/payments/provider.ts`); today it only offers a manual/offline
+   flow that a human must confirm — `Payment.status` never becomes
+   `SUCCEEDED` for a non-zero amount without that explicit
+   `confirmPayment()` call. Nothing simulates a successful charge.
 3. **Parent↔student linking has no self-service UI yet** — the schema and
    access-control logic exist and are tested, but a parent currently needs
    the row created directly (e.g. by the teacher/admin) rather than through
    a request/approve flow in the product.
-4. A `deepmerge-ts` advisory in Prisma's CLI tooling is open (dev-only
+4. **`syncExpiredSubscriptions()` runs opportunistically on page load**
+   (student/teacher subscription pages), not on a real schedule — a cron
+   job or queue worker is the eventual home for it. Access control does not
+   depend on this running, only the displayed `status` field does.
+5. A `deepmerge-ts` advisory in Prisma's CLI tooling is open (dev-only
    dependency, not shipped to production) — see SECURITY.md for why it was
    not force-downgraded.
 
 ## Test status
 
 ```
-npm test        # 28/28 passing (6 files)
+npm test        # 41/41 passing (7 files)
 npm run typecheck   # clean
 npm run lint         # clean
 npm run build        # succeeds
 ```
 
+Manually verified in a real browser against the dev database: teacher
+login → create subscription plan → attach a course → create a `FREE_100`
+promo code → register a new student → subscribe with the promo code
+(subscription goes `ACTIVE` immediately, payment shows `SUCCEEDED` at
+0.00) → payment history reflects it correctly.
+
 ## Next recommended step
 
-Build the Subscription-plan editor + checkout-stub UI in the teacher CMS
-and student flow (so `grantEntitlementsForSubscription` has a real UI path
-instead of only being reachable from tests), then move to the Shorts model
-UI and the question-bank/quiz editor, continuing the priority order in the
-master spec. Do not restart or re-architect what exists above — extend it.
+Phase 3 — Video Storage & Secure Playback: pick a concrete storage/streaming
+approach (even a minimal private-bucket + short-lived signed URL scheme is
+enough to replace today's placeholder), wire it into `checkVideoAccess`'s
+callers so watch sessions play a real file, and add a teacher video-upload
+UI. Do not restart or re-architect what exists above — extend it.

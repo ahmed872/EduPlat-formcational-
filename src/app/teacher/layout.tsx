@@ -7,6 +7,9 @@ const NAV_ITEMS = [
   { href: "/teacher", label: "لوحة التحكم" },
   { href: "/teacher/categories", label: "الأقسام" },
   { href: "/teacher/courses", label: "الكورسات" },
+  { href: "/teacher/subscriptions", label: "خطط الاشتراك" },
+  { href: "/teacher/promo-codes", label: "أكواد الخصم" },
+  { href: "/teacher/payments", label: "المدفوعات" },
 ];
 
 export default async function TeacherLayout({

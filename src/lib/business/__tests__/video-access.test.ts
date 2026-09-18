@@ -10,6 +10,7 @@ import {
 } from "@/test/factories";
 import {
   checkVideoAccess,
+  grantAdminEntitlement,
   grantEntitlementsForSubscription,
   startWatchSession,
   updateWatchProgress,
@@ -28,6 +29,7 @@ async function subscribeStudentToCourse(studentId: string, courseId: string) {
     data: {
       studentId,
       planId: plan.id,
+      status: "ACTIVE", // this helper simulates an already-paid, active subscription
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365),
     },
   });
@@ -167,6 +169,44 @@ describe("checkVideoAccess", () => {
     expect(septemberDecision.allowed).toBe(true);
     expect(octoberDecision.allowed).toBe(false);
     expect(octoberDecision.reason).toBe("NOT_ENTITLED");
+  });
+
+  it("lets an admin explicitly unlock a single lesson published after the subscription window", async () => {
+    const student = await createStudent();
+    const course = await createCourse();
+    const lessonSeptember = await createLesson({ courseId: course.id });
+    await createVideo({ lessonId: lessonSeptember.id });
+    await subscribeStudentToCourse(student.id, course.id);
+
+    const lessonOctober = await createLesson({ courseId: course.id });
+    const videoOctober = await createVideo({ lessonId: lessonOctober.id });
+
+    const teacher = await prisma.user.create({
+      data: {
+        email: "teacher-grant@test.local",
+        name: "Teacher",
+        passwordHash: "x",
+        role: "TEACHER_ADMIN",
+      },
+    });
+
+    const beforeGrant = await checkVideoAccess(prisma, {
+      studentId: student.id,
+      videoId: videoOctober.id,
+    });
+    expect(beforeGrant.allowed).toBe(false);
+
+    await grantAdminEntitlement(prisma, {
+      studentId: student.id,
+      lessonId: lessonOctober.id,
+      grantedById: teacher.id,
+    });
+
+    const afterGrant = await checkVideoAccess(prisma, {
+      studentId: student.id,
+      videoId: videoOctober.id,
+    });
+    expect(afterGrant.allowed).toBe(true);
   });
 
   it("denies access once the subscription has expired", async () => {

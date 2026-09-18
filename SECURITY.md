@@ -54,11 +54,23 @@ interpolates table names read back from `pg_tables`, never user input.
 
 ## Payments
 
-`Payment` is provider-agnostic and currently has no gateway wired up.
-**No payment success is ever faked** — `Payment.status` starts at `PENDING`
-and the code contains no path that marks it `SUCCEEDED` without a real
-provider callback/webhook to verify against. Wiring a provider is future
-work, not simulated here.
+`Payment` is provider-agnostic (`src/lib/payments/provider.ts`) and no real
+gateway (Stripe/PayMob/Fawry/...) is wired up. **No payment success is ever
+faked**: for a non-zero amount, `Payment.status` starts at `PENDING` and
+the *only* code path that can move it to `SUCCEEDED` is `confirmPayment()`
+(`src/lib/business/subscription.ts`), which requires an authenticated
+`TEACHER_ADMIN` session and is meant to be called only after that person
+has verified real money actually arrived (bank transfer, cash, mobile
+wallet, ...) outside the app. There is no client-callable endpoint that can
+set a payment to `SUCCEEDED` for a non-zero amount. The only synchronous
+"success" is a genuinely zero-amount checkout (free plan, or a `FREE_100`
+promo) — there being nothing to collect is not the same as faking that
+something was collected. Every confirm/reject/refund transition writes an
+`AuditLog` row (actor, action, entity, metadata). Wiring a real provider
+means implementing `PaymentProvider.createIntent()` against its API (its
+webhook handler would call the same `confirmPayment()`/`rejectPayment()`
+functions, replacing the human click) — the checkout flow itself does not
+change.
 
 ## Anti-abuse (current state)
 
