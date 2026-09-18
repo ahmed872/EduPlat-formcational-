@@ -43,6 +43,38 @@ export async function createExam(formData: FormData) {
   redirect(`/teacher/exams/${quiz.id}`);
 }
 
+export async function createLessonQuiz(formData: FormData) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  const lessonId = String(formData.get("lessonId") ?? "");
+  const title = String(formData.get("title") ?? "").trim();
+  if (!lessonId || !title) {
+    throw new Error("الرجاء اختيار الدرس وإدخال عنوان الاختبار");
+  }
+
+  const existing = await prisma.quiz.findFirst({
+    where: { lessonId, examType: "LESSON_QUIZ" },
+  });
+  if (existing) throw new Error("يوجد بالفعل اختبار لهذا الدرس");
+
+  const passingScore = Number(formData.get("passingScore") ?? 60);
+  const maxAttempts = Number(formData.get("maxAttempts") ?? 3);
+
+  const quiz = await prisma.quiz.create({
+    data: {
+      lessonId,
+      examType: "LESSON_QUIZ",
+      title,
+      passingScore,
+      maxAttempts,
+    },
+  });
+
+  revalidatePath("/teacher/exams");
+  redirect(`/teacher/exams/${quiz.id}`);
+}
+
 export async function addQuestionToExam(quizId: string, formData: FormData) {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);

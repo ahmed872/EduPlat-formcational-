@@ -1,15 +1,16 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 6 session)
+Last updated: 2026-09-18 (Phase 7 session)
 
 ## Current phase
 
-Phase 6 (Question Bank & Exams) is complete, on top of Phase 5 (Student
-Learning Features), Phase 4 (Shorts & Timestamp System), Phase 3 (Video
-Storage & Secure Playback), Phase 2 (Subscription & Payment System), and
-the Phase-1 foundation (Foundation → Auth/Roles → Database → Teacher CMS →
-Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
-→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
+Phase 7 (Interactive Experiments) is complete, on top of Phase 6 (Question
+Bank & Exams), Phase 5 (Student Learning Features), Phase 4 (Shorts &
+Timestamp System), Phase 3 (Video Storage & Secure Playback), Phase 2
+(Subscription & Payment System), and the Phase-1 foundation (Foundation →
+Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
+access/security → Subscriptions/Entitlements → Student dashboard →
+Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -285,15 +286,72 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   grading queue → the exam's analytics immediately show the attempt as
   graded with a final percentage.
 
+### Interactive experiments (Phase 7 — new this session)
+- **Teacher editor** (inside `/teacher/courses/[courseId]`, per lesson):
+  create an experiment of any `ExperimentType` (`SIMULATION`,
+  `DRAG_AND_DROP`, `MINI_GAME`, `INTERACTIVE`), set its title, order
+  (implicitly by creation order), and whether it's required or optional
+  for progressing past the lesson; delete an experiment.
+- **Generic interactive runner** (`/student/experiments/[experimentId]`):
+  since no simulation/game engine or content-authoring pipeline is
+  available in this environment, every experiment type shares one honest,
+  functional runner rather than a fake per-type renderer: free-text
+  instructions, an optional ordered checklist of steps the student must
+  all check off, and an optional external link (`embedUrl`) opened in a
+  new tab for a real third-party simulation/tool the teacher points to.
+  Completing it creates a real, timestamped `ExperimentAttempt` row
+  (`completedAt`, `resultJson` recording which steps were checked) — this
+  is a genuine completion record, not a cosmetic checkbox.
+- **Real gating, enforced server-side, not just in the UI**: a lesson's
+  quiz (`Quiz.examType === "LESSON_QUIZ"`) cannot be started
+  (`startQuizAttempt` in `src/lib/business/quiz.ts`) until every
+  `isRequired` experiment for that lesson has at least one completed
+  attempt by that student (`allRequiredExperimentsCompleted` in the new
+  `src/lib/business/experiment.ts`) — optional experiments never block.
+  The student video page mirrors this same check to show/hide the "go to
+  quiz" link, but the enforcement that actually matters lives in the
+  business-logic layer, so it can't be bypassed by calling the API
+  directly.
+- **Full learning-flow wiring on the video page**
+  (`/student/videos/[videoId]`): below the video, a "التجارب التفاعلية"
+  section (link per experiment, or a ✓ once completed), a "اختبار الدرس"
+  section (link to the lesson's quiz once unlocked, otherwise an
+  explanatory message), and a "الدرس التالي" section listing lessons
+  whose `requiredPreviousLessonId` points at this one, linking straight to
+  each one's video. This completes the spec's Video → Experiment → Quiz →
+  Next lesson flow end-to-end.
+- **Lesson-quiz creation UI** (new, in `/teacher/exams`): `Quiz.lessonId`
+  and the `LESSON_QUIZ` exam type already existed in the schema and in
+  `quiz.ts`'s grading/unlocking logic since Foundation, but had no
+  teacher-facing way to create one — a lesson quiz always ends up
+  attached to a real lesson, distinct from the free-standing
+  weekly/monthly/midterm/final/custom exams built in Phase 6, which keep
+  their own creation form and listing.
+- **Real bug found and fixed via manual testing, not test-suite-caught**:
+  `canAccessLesson()` (sequential lesson unlocking via
+  `requiredPreviousLessonId`) has existed and been unit-tested since
+  Foundation, but was never actually called from any route — a student
+  could always open any lesson's video directly by URL regardless of
+  whether the previous lesson/quiz was completed. The video page
+  (`src/app/student/videos/[videoId]/page.tsx`) now calls it before
+  `checkVideoAccess` and shows an explanatory message instead of the
+  video when the previous lesson isn't done.
+- Manually verified end-to-end in a real browser: teacher creates a
+  course/lesson, uploads a video, adds a required interactive experiment,
+  creates a lesson quiz and attaches a question → a new student opens the
+  free lesson and sees the quiz link disabled with an explanation → the
+  student completes the experiment → the quiz link unlocks → the student
+  takes and passes the quiz, confirming the full gate (experiment →
+  unlock → quiz) is enforced for real, not just displayed.
+
 ## Not started (by priority order, all schema-ready)
 
-Experiments UI/renderer, teacher analytics dashboards, monthly parent PDF
-reports, email/push notification delivery, announcements UI, mini/daily
-games + leaderboards + Hall of Fame, achievements engine, career guidance
-content + exploration quiz, certificates + public verification page,
-referral system UI, support ticket UI, store/checkout, real payment
-gateway integration, audit-log UI, rate limiting, concurrent-session
-detection, HLS/DRM, search.
+Teacher analytics dashboards, monthly parent PDF reports, email/push
+notification delivery, announcements UI, mini/daily games + leaderboards +
+Hall of Fame, achievements engine, career guidance content + exploration
+quiz, certificates + public verification page, referral system UI, support
+ticket UI, store/checkout, real payment gateway integration, audit-log UI,
+rate limiting, concurrent-session detection, HLS/DRM, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -329,11 +387,23 @@ detection, HLS/DRM, search.
 9. **No conflict detection between overlapping exam schedules** — a
    teacher can create two exams with overlapping `availableFrom`/
    `availableTo` windows with no warning.
+10. **No real simulation/game engine for experiments.** `SIMULATION`,
+    `DRAG_AND_DROP`, and `MINI_GAME` experiment types share the same
+    generic runner as `INTERACTIVE` (instructions + checklist + optional
+    external link) — there is no content-authoring pipeline or game
+    engine in this environment to build type-specific interactive
+    content. The gating and completion-tracking around it are real; the
+    interaction surface itself is intentionally simple and honest about
+    that, and the `type` field lets a real per-type renderer be added
+    later without a schema change.
+11. **Experiment ordering is by creation order only** — there is no
+    drag-to-reorder UI; a teacher who needs a specific order must delete
+    and recreate experiments in the desired sequence.
 
 ## Test status
 
 ```
-npx vitest run       # 67/67 passing (12 files)
+npx vitest run       # 76/76 passing (13 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -362,11 +432,9 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 7 — Interactive Experiments: the `Experiment`/`ExperimentAttempt`
-models already exist in the schema from Phase 1 but currently have no
-UI/business logic wired up. Build: a teacher-facing experiment editor
-linked to a lesson (with ordering and required/optional flag), and a
-student-facing runner wired into the learning flow (Video → Experiment →
-Quiz → Next lesson). Inspect the exact current schema/state at the start
-of the phase before building. Do not restart or re-architect what exists
-above — extend it.
+Phase 8 — Student Analytics: teacher-facing analytics dashboards (per
+student, per course, per exam) and student-facing progress/analytics
+views beyond what already exists (study-time summaries, exam analytics
+per quiz from Phase 6). Inspect the exact current schema/state at the
+start of the phase before building. Do not restart or re-architect what
+exists above — extend it.

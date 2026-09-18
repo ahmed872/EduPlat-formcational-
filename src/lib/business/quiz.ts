@@ -1,5 +1,6 @@
 import type { PrismaClient, QuestionType } from "@prisma/client";
 import { notify } from "@/lib/business/notifications";
+import { allRequiredExperimentsCompleted } from "@/lib/business/experiment";
 
 function isAutoGradable(type: QuestionType) {
   return type !== "ESSAY" && type !== "SHORT_ANSWER";
@@ -63,6 +64,16 @@ export async function startQuizAttempt(
   }
   if (quiz.availableTo && now > quiz.availableTo) {
     throw new Error("This exam is no longer available");
+  }
+
+  if (quiz.examType === "LESSON_QUIZ" && quiz.lessonId) {
+    const ready = await allRequiredExperimentsCompleted(prisma, {
+      lessonId: quiz.lessonId,
+      studentId: params.studentId,
+    });
+    if (!ready) {
+      throw new Error("Complete the required experiments for this lesson first");
+    }
   }
 
   const { allowed, nextAttemptNumber } = await canStartNewAttempt(prisma, params);

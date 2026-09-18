@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { createExam } from "./actions";
+import { createExam, createLessonQuiz } from "./actions";
 
 const EXAM_TYPE_LABELS: Record<string, string> = {
   WEEKLY: "أسبوعي",
@@ -11,11 +11,22 @@ const EXAM_TYPE_LABELS: Record<string, string> = {
 };
 
 export default async function ExamsListPage() {
-  const exams = await prisma.quiz.findMany({
-    where: { examType: { not: "LESSON_QUIZ" } },
-    include: { quizQuestions: true, attempts: true },
-    orderBy: { createdAt: "desc" },
-  });
+  const [exams, lessonQuizzes, lessons] = await Promise.all([
+    prisma.quiz.findMany({
+      where: { examType: { not: "LESSON_QUIZ" } },
+      include: { quizQuestions: true, attempts: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.quiz.findMany({
+      where: { examType: "LESSON_QUIZ" },
+      include: { quizQuestions: true, attempts: true, lesson: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.lesson.findMany({
+      include: { course: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -125,6 +136,88 @@ export default async function ExamsListPage() {
           </Link>
         ))}
         {exams.length === 0 && <p className="text-sm text-gray-500">لا توجد امتحانات بعد.</p>}
+      </div>
+
+      <div>
+        <h2 className="mb-3 text-xl font-bold">اختبارات الدروس</h2>
+        <p className="mb-3 text-sm text-gray-600">
+          اختبار مرتبط بدرس محدد — جزء من مسار التعلم (فيديو ← تجارب ← اختبار
+          ← الدرس التالي). النجاح فيه يفتح الدرس التالي تلقائيًا.
+        </p>
+        <form
+          action={createLessonQuiz}
+          className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white p-4"
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">الدرس</span>
+            <select
+              name="lessonId"
+              required
+              className="min-w-56 rounded-md border border-gray-300 px-3 py-2"
+            >
+              <option value="">اختر درسًا</option>
+              {lessons.map((lesson) => (
+                <option key={lesson.id} value={lesson.id}>
+                  [{lesson.course.title}] {lesson.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">عنوان الاختبار</span>
+            <input
+              name="title"
+              required
+              className="min-w-56 rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">درجة النجاح %</span>
+            <input
+              type="number"
+              name="passingScore"
+              defaultValue={60}
+              min="0"
+              max="100"
+              className="w-24 rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">عدد المحاولات</span>
+            <input
+              type="number"
+              name="maxAttempts"
+              defaultValue={3}
+              min="1"
+              className="w-20 rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700"
+          >
+            إنشاء اختبار الدرس
+          </button>
+        </form>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {lessonQuizzes.map((quiz) => (
+            <Link
+              key={quiz.id}
+              href={`/teacher/exams/${quiz.id}`}
+              className="rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-300"
+            >
+              <p className="font-semibold">{quiz.title}</p>
+              <p className="mt-1 text-xs text-gray-500">
+                الدرس: {quiz.lesson?.title ?? "—"} · {quiz.quizQuestions.length} سؤال ·{" "}
+                {quiz.attempts.length} محاولة
+              </p>
+            </Link>
+          ))}
+          {lessonQuizzes.length === 0 && (
+            <p className="text-sm text-gray-500">لا توجد اختبارات دروس بعد.</p>
+          )}
+        </div>
       </div>
     </div>
   );

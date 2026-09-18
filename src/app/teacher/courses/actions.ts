@@ -184,3 +184,60 @@ export async function deleteVideoChapter(courseId: string, chapterId: string) {
 
   revalidatePath(`/teacher/courses/${courseId}`);
 }
+
+const EXPERIMENT_TYPES = new Set(["SIMULATION", "DRAG_AND_DROP", "MINI_GAME", "INTERACTIVE"]);
+
+export async function createExperiment(
+  courseId: string,
+  lessonId: string,
+  formData: FormData,
+) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  const type = String(formData.get("type") ?? "");
+  const title = String(formData.get("title") ?? "").trim();
+  const instructions = String(formData.get("instructions") ?? "").trim();
+  const stepsRaw = String(formData.get("steps") ?? "").trim();
+  const embedUrl = String(formData.get("embedUrl") ?? "").trim();
+  const isRequired = formData.get("isRequired") === "on";
+
+  if (!EXPERIMENT_TYPES.has(type)) throw new Error("نوع التجربة غير صالح");
+  if (!title || !instructions) {
+    throw new Error("الرجاء إدخال عنوان التجربة وتعليماتها");
+  }
+
+  const steps = stepsRaw
+    ? stepsRaw
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  const order = await prisma.experiment.count({ where: { lessonId } });
+  await prisma.experiment.create({
+    data: {
+      lessonId,
+      type: type as never,
+      title,
+      order,
+      isRequired,
+      config: {
+        instructions,
+        steps,
+        embedUrl: embedUrl || undefined,
+      },
+    },
+  });
+
+  revalidatePath(`/teacher/courses/${courseId}`);
+}
+
+export async function deleteExperiment(courseId: string, experimentId: string) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  await prisma.experiment.delete({ where: { id: experimentId } });
+
+  revalidatePath(`/teacher/courses/${courseId}`);
+}

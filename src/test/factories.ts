@@ -106,3 +106,20 @@ export async function createSubscriptionPlan(overrides: {
     },
   });
 }
+
+export async function createExperiment(overrides: {
+  lessonId: string;
+  isRequired?: boolean;
+  order?: number;
+}) {
+  return prisma.experiment.create({
+    data: {
+      lessonId: overrides.lessonId,
+      type: "INTERACTIVE",
+      title: unique("experiment"),
+      config: { instructions: "افعل كذا وكذا" },
+      order: overrides.order ?? 0,
+      isRequired: overrides.isRequired ?? true,
+    },
+  });
+}

@@ -16,6 +16,7 @@ export default async function ExamDetailPage({
           include: { question: true },
           orderBy: { order: "asc" },
         },
+        lesson: true,
       },
     }),
     prisma.questionBank.findMany({ include: { questions: true } }),
@@ -50,6 +51,7 @@ export default async function ExamDetailPage({
           درجة النجاح: {quiz.passingScore}% · محاولات: {quiz.maxAttempts}
           {quiz.timeLimitMinutes && ` · المدة: ${quiz.timeLimitMinutes} دقيقة`}
           {quiz.questionCount && ` · عدد أسئلة عشوائي: ${quiz.questionCount}`}
+          {quiz.lesson && ` · درس: ${quiz.lesson.title}`}
         </p>
       </div>
 
