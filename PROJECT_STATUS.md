@@ -1,11 +1,11 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 2 session)
+Last updated: 2026-09-18 (Phase 3 session)
 
 ## Current phase
 
-Phase 2 (Subscription & Payment System) of the master spec's execution
-order is complete, on top of the Phase-1 foundation (Foundation →
+Phase 3 (Video Storage & Secure Playback) is complete, on top of Phase 2
+(Subscription & Payment System) and the Phase-1 foundation (Foundation →
 Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
 access/security → Subscriptions/Entitlements → Student dashboard →
 Progress/Timer → Quizzes/Unlocking).
@@ -46,11 +46,14 @@ Progress/Timer → Quizzes/Unlocking).
 - Payment confirmation queue (`/teacher/payments`): every pending
   manual/offline payment, with one-click confirm (grants entitlements) or
   reject (cancels the subscription), plus a recent-decisions log.
-- **Not yet built**: video upload UI, Shorts UI, chapters/notes editor,
-  experiments editor, quiz/question-bank editor, announcements, settings
-  UI. The underlying business logic and schema for several of these
-  already exist and are tested (quizzes) — only the teacher-facing forms
-  are pending.
+- Video upload per lesson (in `/teacher/courses/[courseId]`): uploads a
+  real file to private storage, creates/replaces the lesson's `Video` row,
+  publishes it immediately (duration is teacher-entered — see Phase 3
+  below for why).
+- **Not yet built**: Shorts UI, chapters/notes editor, experiments editor,
+  quiz/question-bank editor, announcements, settings UI. The underlying
+  business logic and schema for several of these already exist and are
+  tested (quizzes) — only the teacher-facing forms are pending.
 
 ### Core business rules (implemented AND tested against a real Postgres
 test database — no mocks)
@@ -101,16 +104,30 @@ test database — no mocks)
   never depends on this running, since `checkVideoAccess` already evaluates
   `expiresAt` dynamically).
 
-**41/41 tests passing** (`npm test`). Full list: `src/lib/**/__tests__/*.test.ts`.
+- **Signed, expiring video playback** (`src/lib/business/playback.ts`,
+  5 tests): HMAC-signed tokens verified with constant-time comparison,
+  rejecting tampered payloads and expired tokens; `issueSignedPlaybackUrl()`
+  re-runs the full entitlement check before minting a token, denying a
+  non-entitled student the same way `checkVideoAccess` would.
+- **Streaming route authorization** (`src/app/api/stream/[videoId]/route.ts`,
+  5 tests against a real file on disk): streams a full file and a byte
+  range (206 Partial Content, correct `Content-Range`) with a valid token;
+  rejects a missing token, a token issued for a different video, and —
+  critically — re-checks entitlement at stream time and denies a video the
+  student isn't entitled to even with a well-formed, unexpired token.
+
+**51/51 tests passing** (`npm test`). Full list: `src/lib/**/__tests__/*.test.ts`
+and `src/app/api/stream/__tests__/*.test.ts`.
 
 ### Student dashboard
 - Daily/weekly/monthly study-time summary, current streak, weekly target
   progress bar, per-course lesson list with lock/progress state.
 - Video watch page: runs the real `checkVideoAccess` gate server-side,
   shows the correct denial reason (not entitled / view limit reached), and
-  for allowed videos exercises the real watch-session + heartbeat APIs
-  through a placeholder player control (see "Known gaps" — there is no real
-  media file wired up, and the page says so instead of pretending).
+  for allowed videos renders a real `<video>` element streaming from a
+  signed, authorization-checked URL (see "Video storage & playback" below)
+  with real heartbeat/progress reporting, resume-from-last-position, and an
+  identity watermark overlay.
 
 ### Parent dashboard
 - Lists linked children (via `ParentStudent`) with aggregate study time and
@@ -137,14 +154,25 @@ test database — no mocks)
   and updating `getActivePaymentProvider()`; nothing else in the checkout
   flow needs to change.
 
-## In-progress / partially built
-
-- Video delivery: authorization + watch-session/view-limit system is fully
-  built and tested; actual signed/expiring playback URLs from a real
-  storage provider (Cloudflare Stream / Mux / S3+HLS) are **not**
-  implemented — no provider has been selected/configured in this
-  environment. `Video.storageProvider`/`storageKey` are designed so this
-  slots in without a schema change. (Phase 3 in the current plan.)
+### Video storage & secure playback (Phase 3 — new this session)
+- **Private storage**: `src/lib/storage/provider.ts`, disk-backed
+  (`storage/videos/`, never inside `public/`), behind a `StorageProvider`
+  interface a real cloud provider can implement later.
+- **Upload**: teacher can upload a real video file per lesson
+  (`/teacher/courses/[courseId]`), replacing/creating its `Video` row.
+- **Signed, expiring playback**: `src/lib/business/playback.ts`
+  (HMAC-signed tokens) + `/api/playback-url` (issues one after re-checking
+  `checkVideoAccess`) + `/api/stream/[videoId]` (the only route that reads
+  a file; re-checks entitlement again at stream time; serves real HTTP
+  Range/206 responses for seeking).
+- **Real player**: `src/app/student/videos/[videoId]/video-player.tsx` — an
+  actual `<video>` element, resume-from-last-position, real heartbeat/
+  progress reporting tied to `play`/`pause`/`timeupdate`, and a jittering
+  student-identity watermark overlay.
+- **Not implemented**: HLS/DASH segmenting and real DRM — both require a
+  media pipeline (`ffmpeg` or a provider that does it for you) not
+  available in this environment; see ARCHITECTURE.md/SECURITY.md for the
+  documented seam where either plugs in.
 
 ## Not started (by priority order, all schema-ready)
 
@@ -155,48 +183,58 @@ email/push hook), announcements UI, mini/daily games + leaderboards + Hall
 of Fame, achievements engine, career guidance content + exploration quiz,
 certificates + public verification page, referral system UI, support
 ticket UI, store/checkout, real payment gateway integration, audit-log UI,
-rate limiting, concurrent-session detection, video watermarking, search.
+rate limiting, concurrent-session detection, HLS/DRM, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
-1. **Video playback is not wired to a real file.** The watch page tells the
-   student this explicitly rather than showing a silently broken player.
-2. **No real payment gateway is integrated.** The abstraction exists
+1. **No real payment gateway is integrated.** The abstraction exists
    (`src/lib/payments/provider.ts`); today it only offers a manual/offline
    flow that a human must confirm — `Payment.status` never becomes
    `SUCCEEDED` for a non-zero amount without that explicit
    `confirmPayment()` call. Nothing simulates a successful charge.
-3. **Parent↔student linking has no self-service UI yet** — the schema and
+2. **No HLS/DASH segmenting or DRM.** Video is served as a single file over
+   HTTP Range from private storage behind a signed, re-checked-per-request
+   URL — strong authorization, not encryption-at-rest or license-based DRM.
+   Both need a real media pipeline/provider not available here.
+3. **Video duration is teacher-entered**, not auto-detected — no
+   `ffprobe`/media-probing tool is available in this environment.
+4. **Parent↔student linking has no self-service UI yet** — the schema and
    access-control logic exist and are tested, but a parent currently needs
    the row created directly (e.g. by the teacher/admin) rather than through
    a request/approve flow in the product.
-4. **`syncExpiredSubscriptions()` runs opportunistically on page load**
+5. **`syncExpiredSubscriptions()` runs opportunistically on page load**
    (student/teacher subscription pages), not on a real schedule — a cron
    job or queue worker is the eventual home for it. Access control does not
    depend on this running, only the displayed `status` field does.
-5. A `deepmerge-ts` advisory in Prisma's CLI tooling is open (dev-only
+6. A `deepmerge-ts` advisory in Prisma's CLI tooling is open (dev-only
    dependency, not shipped to production) — see SECURITY.md for why it was
    not force-downgraded.
 
 ## Test status
 
 ```
-npm test        # 41/41 passing (7 files)
+npm test        # 51/51 passing (9 files)
 npm run typecheck   # clean
 npm run lint         # clean
 npm run build        # succeeds
 ```
 
-Manually verified in a real browser against the dev database: teacher
-login → create subscription plan → attach a course → create a `FREE_100`
-promo code → register a new student → subscribe with the promo code
-(subscription goes `ACTIVE` immediately, payment shows `SUCCEEDED` at
-0.00) → payment history reflects it correctly.
+Manually verified end-to-end in a real browser against the dev database:
+teacher login → create a lesson → upload a real video file to it →
+publish → create a subscription plan → attach the course → create a
+`FREE_100` promo code → register a new student → subscribe with the promo
+code (subscription `ACTIVE` immediately) → student dashboard lists the
+lesson with a watch link → clicking it renders a real `<video>` element
+whose `src` is a signed `/api/stream/<videoId>?token=...` URL.
 
 ## Next recommended step
 
-Phase 3 — Video Storage & Secure Playback: pick a concrete storage/streaming
-approach (even a minimal private-bucket + short-lived signed URL scheme is
-enough to replace today's placeholder), wire it into `checkVideoAccess`'s
-callers so watch sessions play a real file, and add a teacher video-upload
-UI. Do not restart or re-architect what exists above — extend it.
+Phase 4 — Shorts & Timestamp System: Short upload (teacher), the
+Short→original-video+timestamp relation (schema already supports it —
+`Short.sourceVideoId`/`sourceTimestampSeconds`), a public/free student
+Shorts page with an end-of-short CTA that opens the original video at the
+linked timestamp if entitled or shows a subscribe CTA otherwise, plus a
+teacher chapters/timestamp-notes editor for `VideoChapter` (the model
+exists, tested indirectly via the student watch page display, but has no
+teacher-facing CRUD yet). Do not restart or re-architect what exists
+above — extend it.

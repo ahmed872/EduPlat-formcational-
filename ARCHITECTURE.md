@@ -77,15 +77,51 @@ minimum daily minutes for a streak, max Short duration) with a sane default
 that the teacher/admin can override at runtime via the `PlatformSetting`
 table, without a code change or redeploy.
 
-## Video delivery (intentionally not implemented yet)
+## Video storage & secure playback (Phase 3)
 
-The `Video` model stores `storageProvider` + `storageKey` (a private
-reference, never a public URL) so a real provider (Cloudflare Stream, Mux,
-or S3 + signed CloudFront/HLS URLs) can be plugged in later. The
-authorization gate (`checkVideoAccess`) and the watch-session/view-limit
-system are fully implemented and tested; only the "hand the browser a
-playable, signed, expiring URL" step is a stub, honestly labeled as such on
-the watch page (see PROJECT_STATUS.md → Known gaps).
+`src/lib/storage/provider.ts` defines `StorageProvider` (`save`, `readStream`
+with HTTP-Range support, `getSize`, `delete`, `generateKey`) and one
+implementation, `LocalPrivateStorageProvider`, backed by `storage/videos/`
+on disk — a directory that is never inside `public/` and is only ever read
+by the streaming route below. `Video.storageProvider`/`storageKey` record
+which provider/key a video lives at, so a real cloud provider (S3, R2,
+Cloudflare Stream, Mux) can implement the same interface and replace it via
+`getVideoStorageProvider()` without touching upload actions, playback
+issuance, or the streaming route.
+
+**Upload**: `uploadLessonVideo()` (a Server Action in
+`src/app/teacher/courses/actions.ts`) validates the file type/size, saves it
+through the storage provider, and creates/replaces the lesson's `Video`
+row. Duration is teacher-entered (no `ffprobe`/media-probing tool is
+available in this environment to detect it automatically).
+
+**Playback authorization**: `src/lib/business/playback.ts` issues an
+HMAC-signed, time-limited token (`issuePlaybackToken`/`verifyPlaybackToken`)
+after `issueSignedPlaybackUrl()` re-runs `checkVideoAccess()` — a token is
+never handed out to a non-entitled student. The resulting URL
+(`/api/playback-url` is the Route Handler a student calls to get one) looks
+like `/api/stream/<videoId>?token=...`.
+
+**Streaming**: `src/app/api/stream/[videoId]/route.ts` is the only code
+path that ever reads a video file. It verifies the token, cross-checks any
+active session against the token's student, and — critically — re-runs
+`checkVideoAccess()` again before streaming a byte, so access revoked after
+a token was issued (refund, a concurrent session reaching the view limit)
+is still caught. It implements HTTP Range/206 responses against the private
+file directly, giving real seek/scrub/resume support in a plain `<video>`
+element without a separate segmenting step.
+
+**Player**: `src/app/student/videos/[videoId]/video-player.tsx` is a real
+`<video>` element wired to the same watch-session/heartbeat APIs Phase 1
+built — `onPlay` starts heartbeat + progress-save intervals (paused only
+while the tab is visible, per the study-time rules), resuming from the
+student's last recorded position via `resumeFromSeconds`. It also overlays
+a jittering student-identity watermark as a deterrent (not a cryptographic
+guarantee — see SECURITY.md).
+
+**What's not implemented**: HLS/DASH segmenting (needs `ffmpeg` or a media
+pipeline unavailable here) and real DRM. The interfaces above are the seam
+where both would plug in later.
 
 ## Subscriptions & payments (Phase 2)
 

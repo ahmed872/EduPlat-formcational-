@@ -36,21 +36,49 @@ prevent SQL injection; the one raw-SQL usage (`resetDatabase()` in test
 utilities) only runs against the disposable test database and only
 interpolates table names read back from `pg_tables`, never user input.
 
-## Video protection (current state — see ARCHITECTURE.md for the plan)
+## Video protection
 
-- `Video.storageKey` is a private reference, never a public URL; no route
-  returns a raw file path to the client.
-- `checkVideoAccess()` is the single, tested gate for playback authorization
-  (entitlement + view-limit). It must be called server-side before ever
-  minting a signed playback URL.
-- **Not yet implemented**: the actual signed/expiring URL issuance
-  (Cloudflare Stream / Mux / S3+CloudFront), concurrent-session detection,
-  device limits, and watermarking. These require picking and configuring a
-  real storage/streaming provider, which has not been done in this
-  environment. The watch page states this explicitly to students/testers
-  rather than silently doing nothing. No video piracy protection is or will
-  be claimed as 100% effective — the goal is strong, auditable
-  authorization, not an unbreakable guarantee.
+- **Private storage**: uploaded videos live under `storage/videos/` on disk
+  (`src/lib/storage/provider.ts`), never inside `public/`. Next.js's static
+  file server cannot reach them; the only code path that ever reads one is
+  `src/app/api/stream/[videoId]/route.ts`.
+- **No raw file path or public URL is ever sent to the client.** The
+  student's browser only ever sees a short-lived signed URL
+  (`/api/stream/<videoId>?token=...`).
+- **Signed, expiring playback tokens** (`src/lib/business/playback.ts`):
+  HMAC-SHA256 (keyed by `AUTH_SECRET`) over `{studentId, videoId, exp}`,
+  verified with a constant-time comparison (`timingSafeEqual`) to avoid
+  timing side-channels. `issueSignedPlaybackUrl()` re-runs the full
+  `checkVideoAccess()` gate before minting a token — a token is never
+  issued to a non-entitled student in the first place.
+- **Server-side re-verification on every stream request**: the streaming
+  route does not trust a valid-looking token as proof of *current* access —
+  it decodes the token, then calls `checkVideoAccess()` again before
+  streaming a single byte. A subscription refunded/cancelled mid-window (or
+  a view-limit newly reached by a concurrent session) is caught here even
+  if the token itself hasn't expired yet.
+- **HTTP Range support** (206 Partial Content) is implemented against the
+  private file directly, enabling real seeking/scrubbing/resume in
+  standard `<video>` elements without needing a separate segmenting step.
+- **Identity watermark**: while a video plays, the student's name is
+  overlaid on the player and its position jitters every 20s
+  (`src/app/student/videos/[videoId]/video-player.tsx`). This is a
+  deterrent against casual screen-recording redistribution, not a
+  cryptographic protection, and is described as such here rather than
+  oversold.
+- **Not yet implemented**: HLS/DASH segmenting (needs a real media
+  pipeline — no `ffmpeg` or transcoding service is available in this
+  environment), concurrent-session/device-limit detection, and real DRM
+  (Widevine/FairPlay via a licensed streaming provider). The storage
+  abstraction is deliberately provider-swappable (`StorageProvider`
+  interface) so a DRM-capable provider (Cloudflare Stream, Mux) can replace
+  the local-disk implementation later without touching
+  `checkVideoAccess()`/`issueSignedPlaybackUrl()`. **No video piracy
+  protection is or will be claimed as 100% effective** — the goal here is
+  strong, auditable, server-verified authorization on every request, not
+  an unbreakable guarantee; a sufficiently motivated viewer can always
+  screen-record what their own device is legitimately allowed to display,
+  and no software-only scheme changes that.
 
 ## Payments
 

@@ -37,6 +37,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# private local video storage (see src/lib/storage/provider.ts) — never
+# committed; a real deployment points this at real object storage instead
+/storage/videos/*
+!/storage/videos/.gitkeep
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

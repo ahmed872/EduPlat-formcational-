@@ -4,6 +4,7 @@ import {
   createLesson,
   publishCourse,
   publishLesson,
+  uploadLessonVideo,
 } from "../actions";
 
 export default async function CourseDetailPage({
@@ -46,14 +47,14 @@ export default async function CourseDetailPage({
         )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <h2 className="mb-3 font-semibold">الدروس</h2>
-        <ul className="flex flex-col gap-2">
-          {course.lessons.map((lesson) => (
-            <li
-              key={lesson.id}
-              className="flex items-center justify-between rounded-md border border-gray-100 px-3 py-2"
-            >
+      <div className="flex flex-col gap-3">
+        <h2 className="font-semibold">الدروس</h2>
+        {course.lessons.map((lesson) => (
+          <div
+            key={lesson.id}
+            className="rounded-lg border border-gray-200 bg-white p-4"
+          >
+            <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium">{lesson.title}</p>
                 <p className="text-xs text-gray-500">
@@ -61,7 +62,6 @@ export default async function CourseDetailPage({
                   {lesson.requiredPreviousLesson
                     ? ` · يتطلب اجتياز: ${lesson.requiredPreviousLesson.title}`
                     : ""}
-                  {lesson.video ? " · يحتوي على فيديو" : " · بدون فيديو بعد"}
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -85,12 +85,72 @@ export default async function CourseDetailPage({
                   </form>
                 )}
               </div>
-            </li>
-          ))}
-          {course.lessons.length === 0 && (
-            <li className="text-sm text-gray-500">لا توجد دروس بعد.</li>
-          )}
-        </ul>
+            </div>
+
+            <div className="mt-3 border-t border-gray-100 pt-3">
+              {lesson.video ? (
+                <p className="text-xs text-gray-500">
+                  ✓ يوجد فيديو مرفوع ({Math.round((lesson.video.durationSeconds ?? 0) / 60)}{" "}
+                  دقيقة) — يمكن استبداله برفع ملف جديد أدناه.
+                </p>
+              ) : (
+                <p className="text-xs text-amber-600">لا يوجد فيديو مرفوع لهذا الدرس بعد.</p>
+              )}
+              <form
+                action={uploadLessonVideo.bind(null, courseId, lesson.id)}
+                className="mt-2 flex flex-wrap items-end gap-2"
+              >
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-600">ملف الفيديو</span>
+                  <input
+                    type="file"
+                    name="video"
+                    accept="video/mp4,video/webm,video/quicktime"
+                    required
+                    className="text-xs"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-600">عنوان الفيديو</span>
+                  <input
+                    name="title"
+                    defaultValue={lesson.video?.title ?? lesson.title}
+                    required
+                    className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-600">المدة (ثانية)</span>
+                  <input
+                    type="number"
+                    name="durationSeconds"
+                    min="1"
+                    defaultValue={lesson.video?.durationSeconds ?? undefined}
+                    required
+                    className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                  />
+                </label>
+                <label className="flex items-center gap-1 pb-1">
+                  <input
+                    type="checkbox"
+                    name="isFree"
+                    defaultChecked={lesson.video?.isFree ?? lesson.isFree}
+                  />
+                  <span className="text-xs text-gray-600">فيديو مجاني</span>
+                </label>
+                <button
+                  type="submit"
+                  className="rounded-md bg-gray-800 px-3 py-1.5 text-xs text-white hover:bg-gray-900"
+                >
+                  {lesson.video ? "استبدال الفيديو" : "رفع الفيديو"}
+                </button>
+              </form>
+            </div>
+          </div>
+        ))}
+        {course.lessons.length === 0 && (
+          <p className="text-sm text-gray-500">لا توجد دروس بعد.</p>
+        )}
       </div>
 
       <form

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { checkVideoAccess } from "@/lib/business/video-access";
-import { WatchSessionPlayer } from "./watch-session-player";
+import { VideoPlayer } from "./video-player";
 
 export default async function WatchVideoPage({
   params,
@@ -20,6 +20,13 @@ export default async function WatchVideoPage({
   if (!video) notFound();
 
   const decision = await checkVideoAccess(prisma, { studentId, videoId });
+
+  const lastSession = decision.allowed
+    ? await prisma.watchSession.findFirst({
+        where: { studentId, videoId },
+        orderBy: { startedAt: "desc" },
+      })
+    : null;
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -40,24 +47,19 @@ export default async function WatchVideoPage({
         </div>
       ) : (
         <>
-          <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-sm text-gray-600">
-            <p>
-              مشغل الفيديو الفعلي يتطلب ربط مزود تخزين فيديو خاص (مثل
-              Cloudflare Stream أو Mux أو S3 + HLS موقّع الروابط). هذا الجزء
-              غير مفعّل بعد في هذه البيئة — التفاصيل موجودة في SECURITY.md.
-            </p>
-            <p className="mt-2">
-              ما يعمل فعليًا الآن: التحقق من صلاحية المشاهدة على السيرفر، بدء
-              جلسة مشاهدة (Watch Session) مسجّلة، احتساب المشاهدة بعد تجاوز
-              نسبة المشاهدة المطلوبة، واحتساب وقت المذاكرة الفعلي.
-            </p>
-          </div>
-          <WatchSessionPlayer
+          <VideoPlayer
             videoId={video.id}
-            durationSeconds={video.durationSeconds ?? 600}
+            durationSeconds={video.durationSeconds ?? 0}
             viewsUsed={decision.viewsUsed}
             viewLimit={decision.viewLimit}
+            resumeFromSeconds={lastSession?.watchedSeconds ?? 0}
+            watermarkLabel={`${session!.user.name} · ${session!.user.id.slice(0, 8)}`}
           />
+          <p className="text-xs text-gray-500">
+            البث يتم عبر رابط موقّع (signed URL) محدود الصلاحية ويُتحقق من
+            صلاحية المشاهدة على السيرفر مع كل طلب — راجع SECURITY.md لتفاصيل
+            الحماية وما هو مخطط لاحقًا (HLS/DRM عند توفر مزود بث حقيقي).
+          </p>
           {video.chapters.length > 0 && (
             <div className="rounded-lg border border-gray-200 bg-white p-4">
               <h2 className="mb-2 font-semibold">فصول الفيديو</h2>
