@@ -1,17 +1,17 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 9 session)
+Last updated: 2026-09-18 (Phase 10 session)
 
 ## Current phase
 
-Phase 9 (Parent System) is complete, on top of Phase 8 (Student
-Analytics), Phase 7 (Interactive Experiments), Phase 6 (Question Bank &
-Exams), Phase 5 (Student Learning Features), Phase 4 (Shorts & Timestamp
-System), Phase 3 (Video Storage & Secure Playback), Phase 2 (Subscription
-& Payment System), and the Phase-1 foundation (Foundation → Auth/Roles →
-Database → Teacher CMS → Courses/Lessons/Videos → Video access/security →
-Subscriptions/Entitlements → Student dashboard → Progress/Timer →
-Quizzes/Unlocking).
+Phase 10 (Reports) is complete, on top of Phase 9 (Parent System), Phase 8
+(Student Analytics), Phase 7 (Interactive Experiments), Phase 6 (Question
+Bank & Exams), Phase 5 (Student Learning Features), Phase 4 (Shorts &
+Timestamp System), Phase 3 (Video Storage & Secure Playback), Phase 2
+(Subscription & Payment System), and the Phase-1 foundation (Foundation →
+Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
+access/security → Subscriptions/Entitlements → Student dashboard →
+Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -412,9 +412,42 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   progress data, and — as a direct security check — a second, unrelated
   parent hitting the exact same analytics URL by hand gets a 404.
 
+### Reports (Phase 10 — new this session)
+- **Business logic** (`src/lib/business/reports.ts`):
+  `generateParentReport()` builds a *permanent, period-scoped* snapshot
+  (study time, lessons completed, quizzes taken/passed, average quiz %,
+  experiments completed) from real activity between `periodStart` and
+  `periodEnd`, and saves it as a `ParentReport` row — unlike the live
+  analytics from Phase 8 (always "as of now"), a report stays accurate
+  for that period even as the student keeps studying afterward.
+  `getReportsForStudent()` lists a student's reports newest-period-first.
+  `addTeacherCommentToReport()` lets a teacher attach a remark
+  (`ParentReport.teacherComments`, existed in the schema, unused before
+  this phase).
+- **Teacher page** (`/teacher/reports`): pick a student and a date range,
+  generate a report, and add a comment to any report missing one. There
+  is no scheduled/automatic generation — a teacher (or, in a real
+  deployment, a cron job calling the same business-logic function)
+  triggers it, matching the same "no scheduler in this environment"
+  honesty note already made for `syncExpiredSubscriptions()`.
+- **Parent page** (`/parent/students/[studentId]/reports`): read-only,
+  gated by `assertParentCanAccessStudent()` — an unrelated or unapproved
+  parent gets a 404, exactly like the Phase 9 analytics page.
+- **No PDF generation.** `ParentReport.pdfUrl` exists in the schema but is
+  never populated — there is no PDF-rendering pipeline available in this
+  environment (the same category of honest gap as no `ffprobe`, no
+  HLS/DRM pipeline). The report is a real, structured data snapshot
+  rendered as an HTML page; a PDF export would plug into `pdfUrl` later
+  without changing the underlying data model.
+- 4 new tests (`reports.test.ts`); 97/97 passing overall. Verified
+  end-to-end in a real browser: a teacher generates a report for a
+  student and adds a comment, the linked (approved) parent sees that
+  exact report and comment, and a second, unrelated parent hitting the
+  same reports URL directly gets a 404.
+
 ## Not started (by priority order, all schema-ready)
 
-Monthly parent PDF reports, email/push notification delivery, announcements
+Email/push notification delivery, announcements
 UI, mini/daily games + leaderboards + Hall of Fame, achievements engine,
 career guidance content + exploration quiz, certificates + public
 verification page, referral system UI, support ticket UI, store/checkout,
@@ -483,11 +516,19 @@ concurrent-session detection, HLS/DRM, search.
     is no rate limiting on request attempts, so a malicious actor could in
     theory spam requests at a student (each one still requires that
     student's explicit approval to grant anything).
+16. **Reports are teacher-triggered, not scheduled.** A real deployment
+    would run `generateParentReport()` from a monthly cron job; nothing
+    in this environment can run one, so a teacher generates each report
+    by hand for now (see the same note on `syncExpiredSubscriptions()`).
+17. **No PDF export.** `ParentReport.pdfUrl` exists in the schema and is
+    always `null` — the report is a real data snapshot rendered as an
+    HTML page, not a downloadable file, since no PDF-rendering pipeline
+    is available here.
 
 ## Test status
 
 ```
-npx vitest run       # 93/93 passing (15 files)
+npx vitest run       # 97/97 passing (16 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -516,11 +557,11 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 10 — Reports: build on `ParentReport` (schema exists, unused) and
-`src/lib/business/analytics.ts` (Phase 8) to generate periodic (e.g.
-monthly) progress reports for parents and teachers — this is the natural
-next layer on top of Phase 9's now-working parent linking, since a report
-needs the same real progress data the live analytics pages already
-compute, just persisted as a point-in-time snapshot. Inspect the exact
-current schema/state at the start of the phase before building. Do not
-restart or re-architect what exists above — extend it.
+Phase 11 — Promo & Marketing: the promo code system (`PromoCode`,
+`PromoApplicableContent`, `PromoRedemption`) already exists and is fully
+tested from Phase 2, but this phase's spec scope is broader (marketing
+surfaces — banners/landing content, referral-adjacent promo campaigns,
+etc.). Inspect the exact current schema/state and what Phase 2 already
+covers at the start of the phase before building, so this phase extends
+rather than duplicates the existing promo-code admin UI. Do not restart or
+re-architect what exists above — extend it.

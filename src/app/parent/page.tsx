@@ -89,12 +89,20 @@ export default async function ParentDashboardPage() {
           <div key={student.id} className="rounded-lg border border-gray-200 bg-white p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">{student.user.name}</h2>
-              <Link
-                href={`/parent/students/${student.id}/analytics`}
-                className="text-sm text-indigo-600 hover:underline"
-              >
-                عرض التقدم التفصيلي
-              </Link>
+              <div className="flex gap-3">
+                <Link
+                  href={`/parent/students/${student.id}/analytics`}
+                  className="text-sm text-indigo-600 hover:underline"
+                >
+                  عرض التقدم التفصيلي
+                </Link>
+                <Link
+                  href={`/parent/students/${student.id}/reports`}
+                  className="text-sm text-indigo-600 hover:underline"
+                >
+                  التقارير الدورية
+                </Link>
+              </div>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-4 text-sm text-gray-600 md:grid-cols-3">
               <p>إجمالي وقت المذاكرة: {Math.round(totalSeconds / 60)} دقيقة</p>
