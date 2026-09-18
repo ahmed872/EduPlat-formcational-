@@ -137,6 +137,11 @@ describe("subscription checkout & payment states", () => {
 
     const decision = await checkVideoAccess(prisma, { studentId: student.id, videoId: video.id });
     expect(decision.allowed).toBe(true);
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: student.userId, type: "SUBSCRIPTION_ACTIVATED" },
+    });
+    expect(notifications).toHaveLength(1);
   });
 
   it("a percentage discount reduces the charge but still requires manual confirmation", async () => {

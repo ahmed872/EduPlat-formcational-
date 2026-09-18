@@ -1,14 +1,15 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 4 session)
+Last updated: 2026-09-18 (Phase 5 session)
 
 ## Current phase
 
-Phase 4 (Shorts & Timestamp System) is complete, on top of Phase 3 (Video
-Storage & Secure Playback), Phase 2 (Subscription & Payment System), and
-the Phase-1 foundation (Foundation → Auth/Roles → Database → Teacher CMS →
-Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
-→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
+Phase 5 (Student Learning Features) is complete, on top of Phase 4 (Shorts
+& Timestamp System), Phase 3 (Video Storage & Secure Playback), Phase 2
+(Subscription & Payment System), and the Phase-1 foundation (Foundation →
+Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
+access/security → Subscriptions/Entitlements → Student dashboard →
+Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -197,16 +198,49 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   `<video>` element's `src` is a live `/api/stream-short/<id>` URL that
   plays the uploaded bytes with no authentication at all.
 
+### Student learning features (Phase 5 — new this session)
+- **Notes & bookmarks**: students can save a timestamped private note or
+  bookmark at any point in a video (`/api/notes`, `/api/bookmarks`, each
+  with an ownership-checked delete route), directly from the video player
+  — click any saved item to seek back to it. `/student/saved-moments`
+  lists every note/bookmark across all videos.
+- **Continue watching**: the student dashboard surfaces the most recently
+  watched video whose lesson isn't yet completed, with a one-click resume.
+- **Learning history** (`/student/history`): completed lessons and graded
+  quiz attempts, most recent first.
+- **Free-lesson discovery** (bug found and fixed this session): free
+  lessons were previously only listed on the dashboard if the student
+  already had a paid entitlement in that course — a student with no
+  subscription at all had no way to find free content even though
+  `checkVideoAccess` already allowed it. The dashboard now has a
+  dedicated "دروس مجانية متاحة للجميع" section for exactly this case.
+- **Targets**: `/teacher/targets` lets the teacher set platform-wide
+  default daily/weekly/monthly study-time targets (student-specific
+  targets, when they exist, still take priority). The student dashboard
+  now shows progress bars for all three periods, not just weekly.
+- **Notifications**: `src/lib/business/notifications.ts`'s `notify()` is
+  the one function every notification goes through. Wired into: a lesson
+  unlocking after a passed quiz (`LESSON_UNLOCKED`), a subscription
+  becoming active whether via free/promo checkout or manual payment
+  confirmation (`SUBSCRIPTION_ACTIVATED`), and reaching the daily study
+  target for the first time that day (`TARGET_REACHED`, de-duplicated per
+  day via a JSON-field check on existing notifications). A bell icon in
+  the student header (`src/components/notification-bell.tsx`) polls
+  `/api/notifications` every 30s and supports mark-all-read.
+- Manually verified end-to-end in a real browser: uploaded a free lesson
+  video, confirmed it appears in the new "free lessons" dashboard section
+  for a student with zero subscriptions, added a bookmark and a note from
+  the player, and confirmed both show up on `/student/saved-moments`.
+
 ## Not started (by priority order, all schema-ready)
 
-Experiments UI/renderer, student notes/bookmarks UI, teacher analytics
-dashboards, monthly parent PDF reports, notifications delivery (in-app UI
-+ the eventual email/push hook), announcements UI, mini/daily games +
-leaderboards + Hall of Fame, achievements engine, career guidance content
-+ exploration quiz, certificates + public verification page, referral
-system UI, support ticket UI, store/checkout, real payment gateway
-integration, audit-log UI, rate limiting, concurrent-session detection,
-HLS/DRM, search.
+Experiments UI/renderer, teacher analytics dashboards, monthly parent PDF
+reports, email/push notification delivery, announcements UI, mini/daily
+games + leaderboards + Hall of Fame, achievements engine, career guidance
+content + exploration quiz, certificates + public verification page,
+referral system UI, support ticket UI, store/checkout, real payment
+gateway integration, audit-log UI, rate limiting, concurrent-session
+detection, HLS/DRM, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -236,7 +270,7 @@ HLS/DRM, search.
 ## Test status
 
 ```
-npm test        # 56/56 passing (10 files)
+npm test        # 60/60 passing (11 files)
 npm run typecheck   # clean
 npm run lint         # clean
 npm run build        # succeeds
@@ -255,10 +289,20 @@ login-gated setup → it appears on the public `/shorts` feed → a
 logged-out browser context plays it via `/api/stream-short/<id>` with no
 authentication required.
 
+Manually verified end-to-end (Phase 5): teacher sets default study
+targets on `/teacher/targets` (confirmed via server-rendered HTML: all
+three period forms present and correctly bound) → uploads a free lesson
+video → a brand-new student with zero subscriptions sees it under "دروس
+مجانية متاحة للجميع" on their dashboard (the bug this session found and
+fixed) → opens it, adds a bookmark and a note from the player → both
+appear on `/student/saved-moments`.
+
 ## Next recommended step
 
-Phase 5 — Student Learning Features: student notes and timestamp
-bookmarks UI (`StudentNote`/`Bookmark` models already exist from Phase 1
-but have no CRUD yet), a "continue watching"/learning-history view, and
-notifications tied to progress events (lesson unlocked, target reached).
-Do not restart or re-architect what exists above — extend it.
+Phase 6 — Question Bank & Exams: a question-bank editor (`Question`/
+`QuestionBank` models already exist from Phase 1 with working
+auto/manual grading logic in `src/lib/business/quiz.ts`, but no
+teacher-facing CRUD), an exam builder for `Quiz.examType` values beyond
+`LESSON_QUIZ` (weekly/monthly/midterm/final/custom), randomized question
+selection when `Quiz.questionCount` is set, and exam analytics for the
+teacher. Do not restart or re-architect what exists above — extend it.

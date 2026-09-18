@@ -156,6 +156,45 @@ student watch page) now has a teacher-facing CRUD editor in the lesson's
 video-upload block (`addVideoChapter`/`deleteVideoChapter` in
 `src/app/teacher/courses/actions.ts`).
 
+## Student learning features (Phase 5)
+
+**Notes & bookmarks**: thin CRUD routes (`/api/notes`, `/api/bookmarks`)
+with inline ownership checks (a student can only delete their own row —
+checked by comparing `studentId` before the delete, same pattern as the
+existing watch-session routes) rather than a dedicated business module,
+since there's no rule here beyond ownership. The video player
+(`video-player.tsx`) owns the `<video>` ref, so it also owns the
+add/list/seek/delete UI for both, passed initial data as props from the
+server-rendered watch page.
+
+**Notifications**: `src/lib/business/notifications.ts` is deliberately the
+*only* place a `Notification` row gets created, so every trigger point
+(quiz-unlock in `quiz.ts`, subscription activation in `subscription.ts`,
+the daily-target check in the heartbeat route) calls the same `notify()`
+function. `notifyIfTargetReached()` de-duplicates per calendar day by
+querying existing notifications with a Postgres JSON-path filter on
+`metadata.periodKey` rather than adding a new column — the achieved-vs-
+target comparison itself is computed by the caller (the heartbeat route),
+keeping the notification module free of study-time logic. Delivery today
+is in-app only (a polling bell component); the same `notify()` call site
+is where an email/push side-effect would be added later without touching
+any of the business logic that triggers it.
+
+**Targets fallback**: `Target.studentId` is nullable — a null row is a
+platform-wide default (`/teacher/targets` manages exactly these), and a
+non-null row overrides it for that one student. The student dashboard
+and the heartbeat route's target-reached check both resolve "the
+effective target for period X" the same way: prefer the student-specific
+row, fall back to the global default.
+
+**Free-content discoverability fix**: this phase's own manual testing
+surfaced a real bug — a student with zero subscriptions had no way to see
+free lessons, because the dashboard only ever rendered courses reachable
+through the `Entitlement` table, and a free video/lesson deliberately
+never gets an `Entitlement` row (`checkVideoAccess` allows it directly,
+by design — see Phase 1). Fixed by querying published free lessons
+independently and rendering them in their own dashboard section.
+
 ## Subscriptions & payments (Phase 2)
 
 `src/lib/business/subscription.ts` is the checkout/payment state machine;

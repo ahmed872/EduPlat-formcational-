@@ -1,0 +1,31 @@
+import { z } from "zod";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { requireRole, toErrorResponse } from "@/lib/rbac";
+
+const bodySchema = z.object({
+  videoId: z.string(),
+  timestampSeconds: z.number().int().min(0),
+  content: z.string().min(1).max(2000),
+});
+
+export async function POST(request: Request) {
+  try {
+    const session = await auth();
+    requireRole(session, ["STUDENT"]);
+    const data = bodySchema.parse(await request.json());
+
+    const note = await prisma.studentNote.create({
+      data: {
+        studentId: session.user.studentProfileId!,
+        videoId: data.videoId,
+        timestampSeconds: data.timestampSeconds,
+        content: data.content,
+      },
+    });
+
+    return Response.json(note, { status: 201 });
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}

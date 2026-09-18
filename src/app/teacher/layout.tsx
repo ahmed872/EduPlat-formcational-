@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/teacher/subscriptions", label: "خطط الاشتراك" },
   { href: "/teacher/promo-codes", label: "أكواد الخصم" },
   { href: "/teacher/payments", label: "المدفوعات" },
+  { href: "/teacher/targets", label: "أهداف المذاكرة" },
 ];
 
 export default async function TeacherLayout({

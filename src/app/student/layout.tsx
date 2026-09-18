@@ -2,9 +2,11 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
+import { NotificationBell } from "@/components/notification-bell";
 
 const NAV_ITEMS = [
   { href: "/student", label: "لوحة التحكم" },
+  { href: "/student/saved-moments", label: "لحظاتي المحفوظة" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];
@@ -30,6 +32,7 @@ export default async function StudentLayout({
           ))}
         </nav>
         <div className="flex items-center gap-3">
+          <NotificationBell />
           <span className="text-sm text-gray-500">{session.user.name}</span>
           <form
             action={async () => {

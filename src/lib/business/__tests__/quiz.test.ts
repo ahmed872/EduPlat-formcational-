@@ -48,6 +48,11 @@ describe("quiz grading and lesson unlocking", () => {
       lessonId: lessonB.id,
     });
     expect(after.allowed).toBe(true);
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: student.userId, type: "LESSON_UNLOCKED" },
+    });
+    expect(notifications).toHaveLength(1);
   });
 
   it("failing the quiz keeps the next lesson locked", async () => {

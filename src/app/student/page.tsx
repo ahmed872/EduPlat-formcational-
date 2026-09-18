@@ -26,21 +26,36 @@ export default async function StudentDashboardPage() {
   const session = await auth();
   const studentId = session!.user.studentProfileId!;
 
-  const [entitlements, streak, dailyStats, target] = await Promise.all([
-    prisma.entitlement.findMany({
-      where: { studentId, revokedAt: null, lessonId: { not: null } },
-      include: {
-        lesson: {
-          include: { course: true, video: true },
+  const [entitlements, streak, dailyStats, targets, recentSessions, freeLessons] =
+    await Promise.all([
+      prisma.entitlement.findMany({
+        where: { studentId, revokedAt: null, lessonId: { not: null } },
+        include: {
+          lesson: {
+            include: { course: true, video: true },
+          },
         },
-      },
-    }),
-    prisma.streak.findUnique({ where: { studentId } }),
-    prisma.dailyStudyStat.findMany({ where: { studentId } }),
-    prisma.target.findFirst({
-      where: { studentId, period: "WEEKLY", active: true },
-    }),
-  ]);
+      }),
+      prisma.streak.findUnique({ where: { studentId } }),
+      prisma.dailyStudyStat.findMany({ where: { studentId } }),
+      prisma.target.findMany({
+        where: { OR: [{ studentId }, { studentId: null }], active: true },
+      }),
+      prisma.watchSession.findMany({
+        where: { studentId },
+        orderBy: { startedAt: "desc" },
+        take: 5,
+        include: { video: { include: { lesson: { include: { course: true } } } } },
+      }),
+      // Free lessons are accessible to every student regardless of any
+      // subscription/entitlement (see checkVideoAccess's FREE_VIDEO rule),
+      // so they must be surfaced here independently of the entitlement list
+      // above — otherwise a student would have no way to discover them.
+      prisma.lesson.findMany({
+        where: { isFree: true, status: "PUBLISHED", video: { isFree: true } },
+        include: { course: true, video: true },
+      }),
+    ]);
 
   const lessonIds = entitlements
     .map((e) => e.lessonId)
@@ -64,10 +79,17 @@ export default async function StudentDashboardPage() {
     .filter((s) => s.date.getTime() >= monthStart.getTime())
     .reduce((sum, s) => sum + s.totalActiveSeconds, 0);
 
-  const weeklyTargetMinutes = target?.targetMinutes ?? 0;
-  const weeklyProgressPercent = weeklyTargetMinutes
-    ? Math.min(100, Math.round((weekSeconds / 60 / weeklyTargetMinutes) * 100))
-    : null;
+  function pickTarget(period: "DAILY" | "WEEKLY" | "MONTHLY") {
+    const studentSpecific = targets.find((t) => t.studentId === studentId && t.period === period);
+    const global = targets.find((t) => t.studentId === null && t.period === period);
+    return studentSpecific ?? global ?? null;
+  }
+
+  const targetRows: Array<{ label: string; seconds: number; period: "DAILY" | "WEEKLY" | "MONTHLY" }> = [
+    { label: "الهدف اليومي", seconds: todaySeconds, period: "DAILY" },
+    { label: "الهدف الأسبوعي", seconds: weekSeconds, period: "WEEKLY" },
+    { label: "الهدف الشهري", seconds: monthSeconds, period: "MONTHLY" },
+  ];
 
   const courseGroups = new Map<
     string,
@@ -85,6 +107,13 @@ export default async function StudentDashboardPage() {
     courseGroups.get(courseId)!.lessons.push(entitlement);
   }
 
+  // "Continue watching": most recently watched video whose lesson isn't completed.
+  const continueWatching = recentSessions.find((watchSession) => {
+    const lessonId = watchSession.video.lesson?.id;
+    if (!lessonId) return false;
+    return progressByLesson.get(lessonId)?.status !== "COMPLETED";
+  });
+
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-8">
       <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -97,23 +126,59 @@ export default async function StudentDashboardPage() {
         />
       </section>
 
-      {weeklyProgressPercent !== null && (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm text-gray-600">
-            الهدف الأسبوعي: {weeklyTargetMinutes} دقيقة — تم إنجاز{" "}
-            {Math.round(weekSeconds / 60)} دقيقة
-          </p>
-          <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
-            <div
-              className="h-2 rounded-full bg-indigo-600"
-              style={{ width: `${weeklyProgressPercent}%` }}
-            />
+      <section className="grid gap-3 sm:grid-cols-3">
+        {targetRows.map(({ label, seconds, period }) => {
+          const target = pickTarget(period);
+          if (!target) return null;
+          const percent = Math.min(
+            100,
+            Math.round((seconds / 60 / target.targetMinutes) * 100),
+          );
+          return (
+            <div key={period} className="rounded-lg border border-gray-200 bg-white p-4">
+              <p className="text-sm text-gray-600">
+                {label}: {target.targetMinutes} دقيقة — تم {Math.round(seconds / 60)} دقيقة
+              </p>
+              <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
+                <div
+                  className="h-2 rounded-full bg-indigo-600"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </section>
+
+      {continueWatching && (
+        <section className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+          <p className="text-sm text-indigo-700">متابعة المشاهدة من حيث توقفت</p>
+          <div className="mt-2 flex items-center justify-between">
+            <div>
+              <p className="font-semibold">
+                {continueWatching.video.lesson?.title ?? continueWatching.video.title}
+              </p>
+              <p className="text-xs text-gray-500">
+                {continueWatching.video.lesson?.course.title}
+              </p>
+            </div>
+            <Link
+              href={`/student/videos/${continueWatching.video.id}`}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700"
+            >
+              متابعة
+            </Link>
           </div>
         </section>
       )}
 
       <section className="flex flex-col gap-4">
-        <h2 className="text-xl font-bold">كورساتي</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">كورساتي</h2>
+          <Link href="/student/history" className="text-sm text-indigo-600 hover:underline">
+            سجل التعلم
+          </Link>
+        </div>
         {courseGroups.size === 0 && (
           <p className="text-sm text-gray-500">
             لا يوجد لديك اشتراك فعّال بعد. تصفح الكورسات المتاحة للاشتراك.
@@ -158,6 +223,37 @@ export default async function StudentDashboardPage() {
           </div>
         ))}
       </section>
+
+      {freeLessons.some((lesson) => !lessonIds.includes(lesson.id)) && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-xl font-bold">دروس مجانية متاحة للجميع</h2>
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <ul className="flex flex-col gap-2">
+              {freeLessons
+                .filter((lesson) => !lessonIds.includes(lesson.id))
+                .map((lesson) => (
+                  <li
+                    key={lesson.id}
+                    className="flex items-center justify-between rounded-md border border-gray-100 px-3 py-2"
+                  >
+                    <div>
+                      <span>{lesson.title}</span>
+                      <span className="ms-2 text-xs text-gray-500">({lesson.course.title})</span>
+                    </div>
+                    {lesson.video && (
+                      <Link
+                        href={`/student/videos/${lesson.video.id}`}
+                        className="text-sm text-indigo-600 hover:underline"
+                      >
+                        مشاهدة
+                      </Link>
+                    )}
+                  </li>
+                ))}
+            </ul>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

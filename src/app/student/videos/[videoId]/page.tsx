@@ -25,12 +25,22 @@ export default async function WatchVideoPage({
 
   const decision = await checkVideoAccess(prisma, { studentId, videoId });
 
-  const lastSession = decision.allowed
-    ? await prisma.watchSession.findFirst({
-        where: { studentId, videoId },
-        orderBy: { startedAt: "desc" },
-      })
-    : null;
+  const [lastSession, notes, bookmarks] = decision.allowed
+    ? await Promise.all([
+        prisma.watchSession.findFirst({
+          where: { studentId, videoId },
+          orderBy: { startedAt: "desc" },
+        }),
+        prisma.studentNote.findMany({
+          where: { studentId, videoId },
+          orderBy: { timestampSeconds: "asc" },
+        }),
+        prisma.bookmark.findMany({
+          where: { studentId, videoId },
+          orderBy: { timestampSeconds: "asc" },
+        }),
+      ])
+    : [null, [], []];
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -62,28 +72,23 @@ export default async function WatchVideoPage({
                 : (lastSession?.watchedSeconds ?? 0)
             }
             watermarkLabel={`${session!.user.name} · ${session!.user.id.slice(0, 8)}`}
+            chapters={video.chapters}
+            initialNotes={notes.map((n) => ({
+              id: n.id,
+              timestampSeconds: n.timestampSeconds,
+              label: n.content,
+            }))}
+            initialBookmarks={bookmarks.map((b) => ({
+              id: b.id,
+              timestampSeconds: b.timestampSeconds,
+              label: b.label ?? "",
+            }))}
           />
           <p className="text-xs text-gray-500">
             البث يتم عبر رابط موقّع (signed URL) محدود الصلاحية ويُتحقق من
             صلاحية المشاهدة على السيرفر مع كل طلب — راجع SECURITY.md لتفاصيل
             الحماية وما هو مخطط لاحقًا (HLS/DRM عند توفر مزود بث حقيقي).
           </p>
-          {video.chapters.length > 0 && (
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <h2 className="mb-2 font-semibold">فصول الفيديو</h2>
-              <ul className="flex flex-col gap-1 text-sm">
-                {video.chapters.map((chapter) => (
-                  <li key={chapter.id} className="flex justify-between">
-                    <span>{chapter.title}</span>
-                    <span className="text-gray-500">
-                      {Math.floor(chapter.timestampSeconds / 60)}:
-                      {String(chapter.timestampSeconds % 60).padStart(2, "0")}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </>
       )}
     </div>

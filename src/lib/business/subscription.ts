@@ -9,6 +9,21 @@ import {
   grantEntitlementsForSubscription,
 } from "@/lib/business/video-access";
 import { getActivePaymentProvider } from "@/lib/payments/provider";
+import { notify } from "@/lib/business/notifications";
+
+async function notifySubscriptionActivated(prisma: PrismaClient, studentId: string, planName: string) {
+  const student = await prisma.studentProfile.findUnique({
+    where: { id: studentId },
+    select: { userId: true },
+  });
+  if (!student) return;
+  await notify(prisma, {
+    userId: student.userId,
+    type: "SUBSCRIPTION_ACTIVATED",
+    title: "تم تفعيل اشتراكك",
+    body: `تم تفعيل اشتراكك في "${planName}" ويمكنك الآن الوصول للمحتوى المشمول.`,
+  });
+}
 
 /**
  * The platform-wide default: subscriptions expire at the configured
@@ -100,6 +115,7 @@ export async function startSubscriptionCheckout(
 
   if (intent.status === "SUCCEEDED") {
     await grantEntitlementsForSubscription(prisma, subscription.id);
+    await notifySubscriptionActivated(prisma, params.studentId, plan.name);
   }
 
   return { subscription, payment, instructions: intent.instructions };
@@ -149,6 +165,16 @@ export async function confirmPayment(
   // Outside the transaction: this does its own $transaction internally and
   // is only reached once, guarded by the PENDING status check above.
   await grantEntitlementsForSubscription(prisma, payment.subscriptionId);
+
+  const subscriptionWithPlan = await prisma.subscription.findUniqueOrThrow({
+    where: { id: payment.subscriptionId },
+    include: { plan: true },
+  });
+  await notifySubscriptionActivated(
+    prisma,
+    subscriptionWithPlan.studentId,
+    subscriptionWithPlan.plan.name,
+  );
 
   return updated;
 }

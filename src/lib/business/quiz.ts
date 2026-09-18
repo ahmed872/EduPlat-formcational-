@@ -1,4 +1,5 @@
 import type { PrismaClient, QuestionType } from "@prisma/client";
+import { notify } from "@/lib/business/notifications";
 
 function isAutoGradable(type: QuestionType) {
   return type !== "ESSAY" && type !== "SHORT_ANSWER";
@@ -234,6 +235,22 @@ async function markLessonCompletedAndUnlockNext(
         status: "IN_PROGRESS",
       },
     });
+  }
+
+  if (nextLessons.length > 0) {
+    const student = await prisma.studentProfile.findUnique({
+      where: { id: params.studentId },
+      select: { userId: true },
+    });
+    if (student) {
+      await notify(prisma, {
+        userId: student.userId,
+        type: "LESSON_UNLOCKED",
+        title: "تم فتح درس جديد",
+        body: `يمكنك الآن مشاهدة: ${nextLessons.map((l) => l.title).join("، ")}`,
+        metadata: { lessonIds: nextLessons.map((l) => l.id) },
+      });
+    }
   }
 }
 
