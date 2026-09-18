@@ -27,6 +27,7 @@ export async function createQuiz(overrides: {
   maxAttempts?: number;
   failedAttemptConsumesAttempt?: boolean;
   questionIds?: string[];
+  questionCount?: number;
 } = {}) {
   const quiz = await prisma.quiz.create({
     data: {
@@ -35,6 +36,7 @@ export async function createQuiz(overrides: {
       passingScore: overrides.passingScore ?? 60,
       maxAttempts: overrides.maxAttempts ?? 3,
       failedAttemptConsumesAttempt: overrides.failedAttemptConsumesAttempt ?? true,
+      questionCount: overrides.questionCount,
     },
   });
 

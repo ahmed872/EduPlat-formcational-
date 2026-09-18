@@ -1,15 +1,15 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 5 session)
+Last updated: 2026-09-18 (Phase 6 session)
 
 ## Current phase
 
-Phase 5 (Student Learning Features) is complete, on top of Phase 4 (Shorts
-& Timestamp System), Phase 3 (Video Storage & Secure Playback), Phase 2
-(Subscription & Payment System), and the Phase-1 foundation (Foundation →
-Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
-access/security → Subscriptions/Entitlements → Student dashboard →
-Progress/Timer → Quizzes/Unlocking).
+Phase 6 (Question Bank & Exams) is complete, on top of Phase 5 (Student
+Learning Features), Phase 4 (Shorts & Timestamp System), Phase 3 (Video
+Storage & Secure Playback), Phase 2 (Subscription & Payment System), and
+the Phase-1 foundation (Foundation → Auth/Roles → Database → Teacher CMS →
+Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
+→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -51,10 +51,11 @@ Progress/Timer → Quizzes/Unlocking).
   real file to private storage, creates/replaces the lesson's `Video` row,
   publishes it immediately (duration is teacher-entered — see Phase 3
   below for why).
-- **Not yet built**: Shorts UI, chapters/notes editor, experiments editor,
-  quiz/question-bank editor, announcements, settings UI. The underlying
-  business logic and schema for several of these already exist and are
-  tested (quizzes) — only the teacher-facing forms are pending.
+- **Not yet built**: experiments editor, announcements, settings UI. The
+  underlying schema for these already exists — only the teacher-facing
+  forms are pending. (Shorts UI, chapters/notes editor, and the
+  quiz/question-bank editor are now built — see the Phase 4/5/6 sections
+  below.)
 
 ### Core business rules (implemented AND tested against a real Postgres
 test database — no mocks)
@@ -232,6 +233,58 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   for a student with zero subscriptions, added a bookmark and a note from
   the player, and confirmed both show up on `/student/saved-moments`.
 
+### Question bank & exams (Phase 6 — new this session)
+- **Question bank editor** (`/teacher/question-bank`): create named banks,
+  add questions of any `QuestionType` (`SINGLE_CHOICE`, `TRUE_FALSE`,
+  `MULTIPLE_CHOICE`, `MATCHING`, `SHORT_ANSWER`, `ESSAY`) with type-aware
+  input parsing (comma-separated options/correct-answers for choice/matching
+  types; `SHORT_ANSWER`/`ESSAY` store no correct answer — they always route
+  to manual grading), delete a question.
+- **Exam builder** (`/teacher/exams`): create a `Quiz` with any
+  `examType` (`WEEKLY`/`MONTHLY`/`MIDTERM`/`FINAL`/`CUSTOM`, on top of the
+  existing `LESSON_QUIZ`), set passing score, max attempts, an optional
+  time limit, an optional `availableFrom`/`availableTo` window, and an
+  optional `questionCount` for randomized subsetting; attach/detach
+  questions from any bank with per-question points
+  (`/teacher/exams/[quizId]`).
+- **Randomized, fixed-at-start question selection**
+  (`src/lib/business/quiz.ts`): when `Quiz.questionCount` is set and lower
+  than the number of attached questions, `startQuizAttempt()` picks a
+  random subset once and stores it on `QuizAttempt.selectedQuestionIds`
+  (Fisher-Yates shuffle) — every subsequent read/submit/grade for that
+  attempt is scoped to exactly that subset, so a student's assigned
+  questions never change mid-attempt and grading is never diluted by
+  questions they were never shown. `availableFrom`/`availableTo` are
+  enforced server-side at attempt start.
+- **Student exam-taking** (`/student/exams`, `/student/exams/[quizId]`):
+  lists exams with open/upcoming/closed status, best graded result per
+  exam, a real countdown timer derived from `startedAt + timeLimitMinutes`
+  with auto-submit on expiry, per-question-type input rendering (radio,
+  checkboxes, positional text inputs for matching, free-text for
+  short-answer/essay), submits to `/api/exams/[attemptId]/submit` with
+  server-side ownership verification.
+- **Manual grading queue** (`/teacher/grading`): every ungraded
+  `QuizAnswer` (essay/short-answer) across all exams in one place; award
+  points + optional feedback; the attempt only finalizes to `GRADED` once
+  every one of its answers has been graded.
+- **Exam analytics** (`/teacher/exams/[quizId]`): attempt count, average
+  percentage, and pass rate across graded attempts, plus a per-student
+  attempts table.
+- **Critical scoring bug found and fixed before commit**: the finalize
+  step originally computed an attempt's total possible points from *every*
+  question configured on the quiz, not just the subset actually assigned
+  to that attempt — once random subsetting existed, this would have scored
+  a student who answered 100% of their own assigned questions correctly as
+  a low percentage (e.g. 4/10 instead of 4/4). Fixed and covered by a
+  dedicated test that asserts the percentage is computed only over the
+  assigned subset.
+- Manually verified end-to-end in a real browser: teacher creates a
+  question bank with a single-choice and an essay question → creates a
+  custom exam and attaches both → a new student registers, opens the exam,
+  answers both questions, and submits → teacher grades the essay via the
+  grading queue → the exam's analytics immediately show the attempt as
+  graded with a final percentage.
+
 ## Not started (by priority order, all schema-ready)
 
 Experiments UI/renderer, teacher analytics dashboards, monthly parent PDF
@@ -266,13 +319,23 @@ detection, HLS/DRM, search.
 6. A `deepmerge-ts` advisory in Prisma's CLI tooling is open (dev-only
    dependency, not shipped to production) — see SECURITY.md for why it was
    not force-downgraded.
+7. **`MATCHING` questions use a simplified positional representation** —
+   the student fills in one text answer per left-hand item in order, rather
+   than a drag-and-drop pairing UI; grading compares position-by-position.
+8. **`timeLimitMinutes` is enforced client-side** (auto-submit when the
+   countdown reaches zero) plus a submit-time check against
+   `startedAt + timeLimitMinutes`; there is no server-side background job
+   that force-submits an abandoned attempt the instant time expires.
+9. **No conflict detection between overlapping exam schedules** — a
+   teacher can create two exams with overlapping `availableFrom`/
+   `availableTo` windows with no warning.
 
 ## Test status
 
 ```
-npm test        # 60/60 passing (11 files)
-npm run typecheck   # clean
-npm run lint         # clean
+npx vitest run       # 67/67 passing (12 files)
+npx tsc --noEmit     # clean
+npx eslint .         # clean
 npm run build        # succeeds
 ```
 
@@ -299,10 +362,11 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 6 — Question Bank & Exams: a question-bank editor (`Question`/
-`QuestionBank` models already exist from Phase 1 with working
-auto/manual grading logic in `src/lib/business/quiz.ts`, but no
-teacher-facing CRUD), an exam builder for `Quiz.examType` values beyond
-`LESSON_QUIZ` (weekly/monthly/midterm/final/custom), randomized question
-selection when `Quiz.questionCount` is set, and exam analytics for the
-teacher. Do not restart or re-architect what exists above — extend it.
+Phase 7 — Interactive Experiments: the `Experiment`/`ExperimentAttempt`
+models already exist in the schema from Phase 1 but currently have no
+UI/business logic wired up. Build: a teacher-facing experiment editor
+linked to a lesson (with ordering and required/optional flag), and a
+student-facing runner wired into the learning flow (Video → Experiment →
+Quiz → Next lesson). Inspect the exact current schema/state at the start
+of the phase before building. Do not restart or re-architect what exists
+above — extend it.

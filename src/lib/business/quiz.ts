@@ -39,21 +39,88 @@ export async function canStartNewAttempt(
   };
 }
 
+function shuffled<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 export async function startQuizAttempt(
   prisma: PrismaClient,
   params: { quizId: string; studentId: string },
 ) {
+  const quiz = await prisma.quiz.findUniqueOrThrow({
+    where: { id: params.quizId },
+    include: { quizQuestions: true },
+  });
+
+  const now = new Date();
+  if (quiz.availableFrom && now < quiz.availableFrom) {
+    throw new Error("This exam is not open yet");
+  }
+  if (quiz.availableTo && now > quiz.availableTo) {
+    throw new Error("This exam is no longer available");
+  }
+
   const { allowed, nextAttemptNumber } = await canStartNewAttempt(prisma, params);
   if (!allowed) {
     throw new Error("Maximum quiz attempts reached");
   }
+
+  // A random subset is fixed at attempt-start time, not re-rolled on every
+  // fetch, so the student answers the same questions they were shown.
+  const allQuestionIds = quiz.quizQuestions.map((qq) => qq.questionId);
+  const selectedQuestionIds =
+    quiz.questionCount && quiz.questionCount < allQuestionIds.length
+      ? shuffled(allQuestionIds).slice(0, quiz.questionCount)
+      : null;
+
   return prisma.quizAttempt.create({
     data: {
       quizId: params.quizId,
       studentId: params.studentId,
       attemptNumber: nextAttemptNumber,
+      selectedQuestionIds: selectedQuestionIds as never,
     },
   });
+}
+
+/**
+ * The exact set of questions a student must be shown/answer for this
+ * attempt — either the random subset fixed at startQuizAttempt(), or every
+ * configured question if the quiz isn't using questionCount. Never
+ * includes correctAnswer. Order is shuffled when randomizeQuestions is set.
+ */
+export async function getQuestionsForAttempt(
+  prisma: PrismaClient,
+  attemptId: string,
+) {
+  const attempt = await prisma.quizAttempt.findUniqueOrThrow({
+    where: { id: attemptId },
+    include: {
+      quiz: { include: { quizQuestions: { include: { question: true }, orderBy: { order: "asc" } } } },
+    },
+  });
+
+  const allowedIds = attempt.selectedQuestionIds as string[] | null;
+  let quizQuestions = attempt.quiz.quizQuestions;
+  if (allowedIds) {
+    const allowedSet = new Set(allowedIds);
+    quizQuestions = quizQuestions.filter((qq) => allowedSet.has(qq.questionId));
+  }
+
+  const questions = quizQuestions.map((qq) => ({
+    id: qq.question.id,
+    type: qq.question.type,
+    prompt: qq.question.prompt,
+    options: qq.question.options,
+    points: qq.points,
+  }));
+
+  return attempt.quiz.randomizeQuestions ? shuffled(questions) : questions;
 }
 
 /**
@@ -77,11 +144,24 @@ export async function submitQuizAttempt(
     throw new Error("Attempt already submitted");
   }
 
+  const allowedIds = attempt.selectedQuestionIds as string[] | null;
+  const allowedQuizQuestions = allowedIds
+    ? attempt.quiz.quizQuestions.filter((qq) => allowedIds.includes(qq.questionId))
+    : attempt.quiz.quizQuestions;
+  const allowedIdSet = new Set(allowedQuizQuestions.map((qq) => qq.questionId));
+
+  const disallowed = params.answers.find((a) => !allowedIdSet.has(a.questionId));
+  if (disallowed) {
+    throw new Error(
+      `Question ${disallowed.questionId} is not part of this attempt's assigned questions`,
+    );
+  }
+
   const pointsByQuestion = new Map(
-    attempt.quiz.quizQuestions.map((qq) => [qq.questionId, qq.points]),
+    allowedQuizQuestions.map((qq) => [qq.questionId, qq.points]),
   );
   const questionById = new Map(
-    attempt.quiz.quizQuestions.map((qq) => [qq.questionId, qq.question]),
+    allowedQuizQuestions.map((qq) => [qq.questionId, qq.question]),
   );
 
   await prisma.$transaction(
@@ -158,11 +238,15 @@ export async function finalizeAttemptIfFullyGraded(
   const stillPending = attempt.answers.some((a) => a.isCorrect === null);
   if (stillPending) return attempt;
 
+  // Total is based on the questions actually answered in THIS attempt, not
+  // every question configured on the quiz — required for correctness once
+  // Quiz.questionCount serves a random subset (a student never sees, and
+  // must never be scored against, questions outside their own subset).
   const maxPointsByQuestion = new Map(
     attempt.quiz.quizQuestions.map((qq) => [qq.questionId, qq.points]),
   );
-  const totalPoints = attempt.quiz.quizQuestions.reduce(
-    (sum, qq) => sum + qq.points,
+  const totalPoints = attempt.answers.reduce(
+    (sum, answer) => sum + (maxPointsByQuestion.get(answer.questionId) ?? 0),
     0,
   );
   const earnedPoints = attempt.answers.reduce(
@@ -189,7 +273,6 @@ export async function finalizeAttemptIfFullyGraded(
     });
   }
 
-  void maxPointsByQuestion; // kept for readability of the points computation above
   return updated;
 }
 

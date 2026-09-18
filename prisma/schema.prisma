@@ -452,18 +452,19 @@ enum QuizAttemptStatus {
 }
 
 model QuizAttempt {
-  id            String            @id @default(cuid())
-  quizId        String
-  quiz          Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  studentId     String
-  student       StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  attemptNumber Int
-  status        QuizAttemptStatus @default(IN_PROGRESS)
-  startedAt     DateTime          @default(now())
-  submittedAt   DateTime?
-  score         Float?
-  percentage    Float?
-  passed        Boolean?
+  id                  String            @id @default(cuid())
+  quizId              String
+  quiz                Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  studentId           String
+  student             StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  attemptNumber       Int
+  status              QuizAttemptStatus @default(IN_PROGRESS)
+  selectedQuestionIds Json? // fixed at attempt start when Quiz.questionCount randomizes a subset; null means "all configured questions apply"
+  startedAt           DateTime          @default(now())
+  submittedAt         DateTime?
+  score               Float?
+  percentage          Float?
+  passed              Boolean?
 
   answers QuizAnswer[]
 
