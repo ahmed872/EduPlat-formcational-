@@ -6,10 +6,14 @@ import { VideoPlayer } from "./video-player";
 
 export default async function WatchVideoPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ videoId: string }>;
+  searchParams: Promise<{ t?: string }>;
 }) {
   const { videoId } = await params;
+  const { t } = await searchParams;
+  const startAtSeconds = t ? Number(t) : null;
   const session = await auth();
   const studentId = session!.user.studentProfileId!;
 
@@ -52,7 +56,11 @@ export default async function WatchVideoPage({
             durationSeconds={video.durationSeconds ?? 0}
             viewsUsed={decision.viewsUsed}
             viewLimit={decision.viewLimit}
-            resumeFromSeconds={lastSession?.watchedSeconds ?? 0}
+            resumeFromSeconds={
+              startAtSeconds !== null && !Number.isNaN(startAtSeconds)
+                ? startAtSeconds
+                : (lastSession?.watchedSeconds ?? 0)
+            }
             watermarkLabel={`${session!.user.name} · ${session!.user.id.slice(0, 8)}`}
           />
           <p className="text-xs text-gray-500">

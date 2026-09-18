@@ -123,6 +123,39 @@ guarantee — see SECURITY.md).
 pipeline unavailable here) and real DRM. The interfaces above are the seam
 where both would plug in later.
 
+## Shorts & timestamp system (Phase 4)
+
+Shorts are free/public by design (spec section 12), so they deliberately
+skip the entitlement machinery paid videos go through — but still stream
+through a controlled route rather than a public static path, so the
+storage layer stays uniformly private. `src/lib/http/range-stream.ts`
+factors out the HTTP Range/206 response logic shared by both
+`/api/stream/[videoId]` (paid, token + entitlement gated) and
+`/api/stream-short/[shortId]` (public, only checks `status = PUBLISHED`).
+
+**Short → original video linking**: `Short.sourceVideoId` +
+`sourceTimestampSeconds` (already in the Phase-1 schema) are set at upload
+time by the teacher. `src/lib/business/shorts.ts`'s
+`resolveShortCallToAction()` is the single decision point for "what happens
+when this Short ends":
+- no source video linked → `NO_SOURCE`
+- a guest (no `studentId`) → `SUBSCRIBE_CTA` (never even attempts an
+  entitlement check — a guest can never be entitled to anything)
+- a logged-in student → runs the exact same `checkVideoAccess()` gate a
+  full video page would, returning `OPEN_ORIGINAL` (with the video id and
+  timestamp to seek to) or `SUBSCRIBE_CTA`
+
+The student-facing player (`src/app/shorts/[shortId]/short-player.tsx`)
+reveals this CTA on the video's `ended` event, and `OPEN_ORIGINAL` links to
+`/student/videos/[videoId]?t=<timestampSeconds>`, which the watch page
+reads to seek the real player to that exact moment (taking priority over
+resuming from a previous watch session).
+
+**Chapters**: `VideoChapter` (Phase-1 schema, already rendered on the
+student watch page) now has a teacher-facing CRUD editor in the lesson's
+video-upload block (`addVideoChapter`/`deleteVideoChapter` in
+`src/app/teacher/courses/actions.ts`).
+
 ## Subscriptions & payments (Phase 2)
 
 `src/lib/business/subscription.ts` is the checkout/payment state machine;

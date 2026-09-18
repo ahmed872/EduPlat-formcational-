@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import {
+  addVideoChapter,
   createLesson,
+  deleteVideoChapter,
   publishCourse,
   publishLesson,
   uploadLessonVideo,
@@ -19,7 +21,10 @@ export default async function CourseDetailPage({
       category: true,
       lessons: {
         orderBy: { order: "asc" },
-        include: { video: true, requiredPreviousLesson: true },
+        include: {
+          video: { include: { chapters: { orderBy: { order: "asc" } } } },
+          requiredPreviousLesson: true,
+        },
       },
     },
   });
@@ -145,6 +150,65 @@ export default async function CourseDetailPage({
                   {lesson.video ? "استبدال الفيديو" : "رفع الفيديو"}
                 </button>
               </form>
+
+              {lesson.video && (
+                <div className="mt-3 border-t border-gray-100 pt-3">
+                  <p className="mb-2 text-xs font-medium text-gray-600">
+                    فصول الفيديو (نقاط زمنية)
+                  </p>
+                  <ul className="mb-2 flex flex-col gap-1">
+                    {lesson.video.chapters.map((chapter) => (
+                      <li
+                        key={chapter.id}
+                        className="flex items-center justify-between text-xs text-gray-600"
+                      >
+                        <span>
+                          {Math.floor(chapter.timestampSeconds / 60)}:
+                          {String(chapter.timestampSeconds % 60).padStart(2, "0")} —{" "}
+                          {chapter.title}
+                        </span>
+                        <form action={deleteVideoChapter.bind(null, courseId, chapter.id)}>
+                          <button type="submit" className="text-red-500 hover:underline">
+                            حذف
+                          </button>
+                        </form>
+                      </li>
+                    ))}
+                    {lesson.video.chapters.length === 0 && (
+                      <li className="text-xs text-gray-400">لا توجد فصول بعد.</li>
+                    )}
+                  </ul>
+                  <form
+                    action={addVideoChapter.bind(null, courseId, lesson.video.id)}
+                    className="flex flex-wrap items-end gap-2"
+                  >
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-600">اللحظة (ثانية)</span>
+                      <input
+                        type="number"
+                        name="timestampSeconds"
+                        min="0"
+                        required
+                        className="w-24 rounded-md border border-gray-300 px-2 py-1 text-xs"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-600">عنوان الفصل</span>
+                      <input
+                        name="title"
+                        required
+                        className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      className="rounded-md bg-gray-200 px-3 py-1.5 text-xs hover:bg-gray-300"
+                    >
+                      إضافة فصل
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           </div>
         ))}

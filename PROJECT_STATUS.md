@@ -1,14 +1,14 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 3 session)
+Last updated: 2026-09-18 (Phase 4 session)
 
 ## Current phase
 
-Phase 3 (Video Storage & Secure Playback) is complete, on top of Phase 2
-(Subscription & Payment System) and the Phase-1 foundation (Foundation →
-Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
-access/security → Subscriptions/Entitlements → Student dashboard →
-Progress/Timer → Quizzes/Unlocking).
+Phase 4 (Shorts & Timestamp System) is complete, on top of Phase 3 (Video
+Storage & Secure Playback), Phase 2 (Subscription & Payment System), and
+the Phase-1 foundation (Foundation → Auth/Roles → Database → Teacher CMS →
+Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
+→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -174,16 +174,39 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   available in this environment; see ARCHITECTURE.md/SECURITY.md for the
   documented seam where either plugs in.
 
+### Shorts & timestamp system (Phase 4 — new this session)
+- **Teacher** (`/teacher/shorts`): upload a short video (reuses the same
+  private storage as lesson videos), enforcing the configurable
+  `SHORT_MAX_DURATION_SECONDS` platform setting; optionally link it to a
+  source lesson video + an exact timestamp; publish/archive toggle.
+- **Public student-facing feed** (`/shorts`, `/shorts/[shortId]`) —
+  reachable **without login**, matching "students can watch free Shorts
+  without subscribing": lists published Shorts, plays one via the public
+  `/api/stream-short/[shortId]` route (no token/entitlement needed — Shorts
+  are free by design), and on the video's `ended` event shows the CTA from
+  `resolveShortCallToAction()`: opens the original lesson video at the
+  linked timestamp if the (logged-in) viewer is entitled to it, otherwise a
+  subscribe/login CTA. A guest never even gets an entitlement check — they
+  always see the CTA.
+- **Video chapters editor**: `VideoChapter` (schema existed since Phase 1,
+  already displayed on the student watch page) now has a teacher-facing
+  add/delete UI inside each lesson's video block.
+- Manually verified end-to-end in a real browser: teacher uploads a
+  standalone Short → it appears on the public `/shorts` feed → a
+  brand-new, logged-out browser context opens it and the rendered
+  `<video>` element's `src` is a live `/api/stream-short/<id>` URL that
+  plays the uploaded bytes with no authentication at all.
+
 ## Not started (by priority order, all schema-ready)
 
-Shorts UI & short↔video timestamp linking, experiments UI/renderer,
-student notes/bookmarks UI, teacher analytics dashboards, monthly parent
-PDF reports, notifications delivery (in-app UI + the eventual
-email/push hook), announcements UI, mini/daily games + leaderboards + Hall
-of Fame, achievements engine, career guidance content + exploration quiz,
-certificates + public verification page, referral system UI, support
-ticket UI, store/checkout, real payment gateway integration, audit-log UI,
-rate limiting, concurrent-session detection, HLS/DRM, search.
+Experiments UI/renderer, student notes/bookmarks UI, teacher analytics
+dashboards, monthly parent PDF reports, notifications delivery (in-app UI
++ the eventual email/push hook), announcements UI, mini/daily games +
+leaderboards + Hall of Fame, achievements engine, career guidance content
++ exploration quiz, certificates + public verification page, referral
+system UI, support ticket UI, store/checkout, real payment gateway
+integration, audit-log UI, rate limiting, concurrent-session detection,
+HLS/DRM, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -213,28 +236,29 @@ rate limiting, concurrent-session detection, HLS/DRM, search.
 ## Test status
 
 ```
-npm test        # 51/51 passing (9 files)
+npm test        # 56/56 passing (10 files)
 npm run typecheck   # clean
 npm run lint         # clean
 npm run build        # succeeds
 ```
 
-Manually verified end-to-end in a real browser against the dev database:
-teacher login → create a lesson → upload a real video file to it →
-publish → create a subscription plan → attach the course → create a
+Manually verified end-to-end in a real browser against the dev database
+(Phase 3): teacher login → create a lesson → upload a real video file to
+it → publish → create a subscription plan → attach the course → create a
 `FREE_100` promo code → register a new student → subscribe with the promo
 code (subscription `ACTIVE` immediately) → student dashboard lists the
 lesson with a watch link → clicking it renders a real `<video>` element
 whose `src` is a signed `/api/stream/<videoId>?token=...` URL.
 
+Manually verified end-to-end (Phase 4): teacher uploads a Short with no
+login-gated setup → it appears on the public `/shorts` feed → a
+logged-out browser context plays it via `/api/stream-short/<id>` with no
+authentication required.
+
 ## Next recommended step
 
-Phase 4 — Shorts & Timestamp System: Short upload (teacher), the
-Short→original-video+timestamp relation (schema already supports it —
-`Short.sourceVideoId`/`sourceTimestampSeconds`), a public/free student
-Shorts page with an end-of-short CTA that opens the original video at the
-linked timestamp if entitled or shows a subscribe CTA otherwise, plus a
-teacher chapters/timestamp-notes editor for `VideoChapter` (the model
-exists, tested indirectly via the student watch page display, but has no
-teacher-facing CRUD yet). Do not restart or re-architect what exists
-above — extend it.
+Phase 5 — Student Learning Features: student notes and timestamp
+bookmarks UI (`StudentNote`/`Bookmark` models already exist from Phase 1
+but have no CRUD yet), a "continue watching"/learning-history view, and
+notifications tied to progress events (lesson unlocked, target reached).
+Do not restart or re-architect what exists above — extend it.

@@ -270,7 +270,9 @@ model Attachment {
 model Short {
   id                     String        @id @default(cuid())
   title                  String
+  storageProvider        String        @default("LOCAL_PRIVATE")
   storageKey             String
+  thumbnailUrl           String?
   durationSeconds        Int
   sourceVideoId          String?
   sourceVideo            Video?        @relation(fields: [sourceVideoId], references: [id])

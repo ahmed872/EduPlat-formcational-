@@ -153,3 +153,34 @@ export async function uploadLessonVideo(
 
   revalidatePath(`/teacher/courses/${courseId}`);
 }
+
+export async function addVideoChapter(
+  courseId: string,
+  videoId: string,
+  formData: FormData,
+) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  const title = String(formData.get("title") ?? "").trim();
+  const timestampSeconds = Number(formData.get("timestampSeconds") ?? -1);
+  if (!title || Number.isNaN(timestampSeconds) || timestampSeconds < 0) {
+    throw new Error("الرجاء إدخال عنوان الفصل ولحظته الزمنية");
+  }
+
+  const order = await prisma.videoChapter.count({ where: { videoId } });
+  await prisma.videoChapter.create({
+    data: { videoId, title, timestampSeconds, order },
+  });
+
+  revalidatePath(`/teacher/courses/${courseId}`);
+}
+
+export async function deleteVideoChapter(courseId: string, chapterId: string) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  await prisma.videoChapter.delete({ where: { id: chapterId } });
+
+  revalidatePath(`/teacher/courses/${courseId}`);
+}
