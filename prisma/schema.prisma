@@ -1017,6 +1017,11 @@ model CareerField {
   description     String
   commonJobs      String[] @default([])
   requiredSkills  String[] @default([])
+  // Fixed interest-trait codes (see CAREER_TRAITS in career-guidance.ts)
+  // this field matches against — distinct from requiredSkills, which is
+  // free-text informational content shown to the student, not machine-
+  // matched by the exploration quiz.
+  traits          String[] @default([])
   roadmap         Json?
   resources       Json?
   portfolioAdvice String?

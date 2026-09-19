@@ -1,11 +1,12 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 14 session)
+Last updated: 2026-09-19 (Phase 15 session)
 
 ## Current phase
 
-Phase 14 (Achievements) is complete, on top of Phase 13 (Leaderboards &
-Hall of Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
+Phase 15 (Career Guidance) is complete, on top of Phase 14
+(Achievements), Phase 13 (Leaderboards & Hall of Fame), Phase 12 (Games),
+Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -637,11 +638,64 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   the teacher then awards the custom achievement by name, and the student
   sees it as earned too.
 
+### Career guidance (Phase 15 — new this session)
+- **Schema extension**: added `CareerField.traits String[]` (migration
+  `20260919104551_career_field_traits`) — distinct from the existing
+  `requiredSkills` field, which stays free-text informational content
+  shown to the student, not machine-matched. `traits` holds a subset of a
+  fixed, closed vocabulary (`CAREER_TRAITS` in `career-guidance.ts`:
+  math/logic, creative/design, communication, hands-on, science/research,
+  tech/programming, business/leadership, helping others) so the
+  exploration quiz can honestly match against it — matching against a
+  teacher's arbitrary free-text `requiredSkills` would be fragile and
+  arbitrary, not a real match.
+- **Business logic** (`src/lib/business/career-guidance.ts`): a fixed
+  5-question exploration quiz (`CAREER_QUIZ_QUESTIONS`), each option
+  tagged with one trait. `submitCareerExplorationQuiz()` validates every
+  question is answered with a real trait, tallies how often each trait
+  was picked, scores every `CareerField` by the overlap between its own
+  `traits` and the student's tallies, and saves the raw answers plus the
+  top 3 non-zero-overlap fields as a permanent `CareerExplorationResult`
+  — a field with zero overlap is never padded in just to fill 3 slots.
+  `getCareerExplorationHistory()` returns every past attempt with its
+  resolved fields; `listCareerFields()` lists every field for browsing
+  regardless of match.
+- **Teacher page** (`/teacher/career-fields`): create a field (name,
+  description, common jobs, required skills, portfolio/job-prep advice)
+  and pick which traits it matches via checkboxes; a field created with
+  no traits checked shows an explicit warning that it can never be
+  suggested by the quiz, rather than silently never appearing.
+- **Student page** (`/student/career-guidance`): take/retake the
+  exploration quiz, see the latest result's suggested fields (or an
+  honest "no field matched" message if none scored), a history of past
+  attempts, and a full browsable list of every career field's details
+  regardless of whether it was ever suggested.
+- **Real, pre-existing infrastructure bug found and fixed**: the schema
+  migration for `CareerField.traits` was applied to the database, but the
+  already-running dev server process (started earlier in this session)
+  still held the previously generated Prisma Client in memory, so the
+  first live create attempt failed with `PrismaClientValidationError:
+  Unknown argument 'traits'` even though `npx vitest run` (which spawns
+  its own fresh process) passed cleanly. Fixed by regenerating the Prisma
+  Client and restarting the dev server — a genuine "schema migrated but
+  the long-running server needs a restart to see it" gap, not a code bug,
+  now confirmed working end-to-end in a fresh browser session.
+- 8 new tests (`career-guidance.test.ts`): correct field suggested on
+  trait overlap, zero-overlap fields never suggested, at most 3 results
+  ranked by score, missing-answer and unknown-question-id rejection,
+  permanent result persistence, and history/listing ordering. 143/143
+  tests passing overall. Verified end-to-end in a real browser
+  (Playwright, transient dev dependency, removed after the run): a
+  teacher creates one field tagged `TECH_PROGRAMMING` and another tagged
+  only `HELPING_OTHERS`, a student answers the quiz favoring
+  `TECH_PROGRAMMING` on every question offering it, and sees only the
+  matching field suggested — the unmatched field never appears in the
+  result box but is still visible when browsing the full field list.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI,
-career guidance content + exploration quiz, certificates + public
+UI, certificates + public
 verification page, referral system UI, support ticket UI, store/checkout,
 real payment gateway integration, audit-log UI, rate limiting,
 concurrent-session detection, HLS/DRM, search.
@@ -745,11 +799,26 @@ concurrent-session detection, HLS/DRM, search.
     delete form, matching the "never delete a feature/data silently"
     stance and avoiding a foreign-key conflict with existing
     `StudentAchievement` rows.
+24. **The career exploration quiz is a fixed 5-question set in code, not
+    teacher-editable.** There is no `CareerQuizQuestion` model in the
+    schema, so the questions/trait tags live in
+    `CAREER_QUIZ_QUESTIONS` — a teacher can shape which fields the quiz
+    can suggest (via each field's `traits`), but not the questions
+    themselves. Adding a real question-editor would need a new schema
+    model.
+25. **No `roadmap`/`resources` authoring UI.** `CareerField.roadmap` and
+    `.resources` (`Json?`) exist in the schema for richer structured
+    content but are never populated by `/teacher/career-fields` — no
+    clear structure for them was in scope this phase; they stay `null`
+    until a real content format is designed.
+26. **No teacher-facing edit for career fields** — `/teacher/career-fields`
+    supports create + delete only, same category of gap as achievements
+    above.
 
 ## Test status
 
 ```
-npx vitest run       # 135/135 passing (20 files)
+npx vitest run       # 143/143 passing (21 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -778,8 +847,12 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 15 — Career Guidance: build the career guidance content model and
-an exploration quiz (schema/state not yet inspected — check what, if
-anything, already exists before designing). Inspect the exact current
+Phase 16 — Certificates & Referral: `Certificate` and `ReferralReward`
+(schema exists — check `Certificate`'s exact fields, e.g. any
+verification-code/public-URL field, and how `StudentProfile.referralCode`
+from Foundation is meant to connect to `ReferralReward` before building).
+Build real certificate issuance (tied to genuine course/exam completion,
+not a rubber stamp) with a public verification page, and a referral
+reward flow off the existing `referralCode`. Inspect the exact current
 schema/state at the start of the phase before building. Do not restart or
 re-architect what exists above — extend it.

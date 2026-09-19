@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/student/leaderboards", label: "لوحة الصدارة" },
   { href: "/student/hall-of-fame", label: "قاعة الشرف" },
   { href: "/student/achievements", label: "إنجازاتي" },
+  { href: "/student/career-guidance", label: "التوجيه المهني" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];

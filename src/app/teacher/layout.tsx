@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/teacher/leaderboards", label: "لوحة الصدارة" },
   { href: "/teacher/hall-of-fame", label: "قاعة الشرف" },
   { href: "/teacher/achievements", label: "الإنجازات" },
+  { href: "/teacher/career-fields", label: "المجالات المهنية" },
   { href: "/teacher/banners", label: "إعلانات الصفحة الرئيسية" },
   { href: "/teacher/categories", label: "الأقسام" },
   { href: "/teacher/courses", label: "الكورسات" },
