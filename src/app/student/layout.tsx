@@ -18,6 +18,8 @@ const NAV_ITEMS = [
   { href: "/student/certificates", label: "شهاداتي" },
   { href: "/student/referral", label: "دعوة الأصدقاء" },
   { href: "/student/support", label: "الدعم الفني" },
+  { href: "/student/store", label: "المتجر" },
+  { href: "/student/orders", label: "طلباتي" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];

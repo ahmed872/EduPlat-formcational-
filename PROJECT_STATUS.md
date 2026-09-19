@@ -1,13 +1,13 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 17 session)
+Last updated: 2026-09-19 (Phase 18 session)
 
 ## Current phase
 
-Phase 17 (Teacher Profile & Support) is complete, on top of Phase 16
-(Certificates & Referral), Phase 15 (Career Guidance), Phase 14
-(Achievements), Phase 13 (Leaderboards & Hall of Fame), Phase 12
-(Games), Phase 11 (Promo & Marketing),
+Phase 18 (Store) is complete, on top of Phase 17 (Teacher Profile &
+Support), Phase 16 (Certificates & Referral), Phase 15 (Career
+Guidance), Phase 14 (Achievements), Phase 13 (Leaderboards & Hall of
+Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -803,10 +803,58 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   `LeaderboardSnapshot` should be watched for if a future phase ever
   needs to `include` a course's teacher relation.
 
+### Store (Phase 18 — new this session)
+- **Real schema gap resolved without widening `Payment`**: `Payment.subscriptionId`
+  is a required field tightly coupled to `Subscription` — there is no
+  polymorphic/generic payment concept, and `Order`/`OrderItem` have no
+  relation to `Payment` at all. Rather than loosening `Payment`'s schema
+  this late (risking every existing subscription test's assumption that
+  a payment always belongs to a subscription), `OrderStatus` itself
+  (`PENDING → CONFIRMED → PREPARING → SHIPPED → DELIVERED`, or
+  `CANCELLED`) is the payment+fulfillment state machine: `CONFIRMED`
+  specifically means a teacher/admin manually verified real money was
+  received (cash on pickup, bank transfer, ...) — the exact same
+  "a human confirms real money was received" honesty rule the platform
+  already uses for subscription payments, just without a separate
+  `Payment` row.
+- **Business logic** (`src/lib/business/store.ts`): `placeOrder()`
+  validates real-time stock and computes the total from each product's
+  own current price inside one transaction (never a client-supplied
+  price, never oversold — stock is decremented immediately alongside
+  order creation). `updateOrderStatus()` enforces a real transition
+  table (no skipping straight to `DELIVERED`, no moving a
+  `CANCELLED`/`DELIVERED` order anywhere) and restocks every line item
+  when an order is cancelled. `cancelOwnPendingOrder()` lets a student
+  cancel only their own **still-PENDING** order — once a teacher has
+  confirmed payment, only the teacher can cancel it, a deliberate rule
+  found and fixed during this phase's own test-writing (the first draft
+  let a student cancel an already-paid order).
+- **Teacher UI**: `/teacher/products` (create a product, starts `DRAFT`
+  like courses/lessons until explicitly shown, restock, hide/show);
+  `/teacher/orders` (every order with one-click forward transitions —
+  "تأكيد استلام الدفع" is the manual payment-verification gate).
+- **Student UI**: `/student/store` (a real client-side cart — add/remove
+  quantities bounded by real stock, checkout calls the server action
+  directly) and `/student/orders` (order history with real status, cancel
+  while still pending).
+- 15 new tests (`store.test.ts`): real-price-based totals, stock
+  decrement/rejection-without-side-effects on insufficient stock,
+  unpublished-product rejection, the transition table (valid and
+  invalid transitions), cancellation restocking, and the
+  cannot-cancel-after-confirmation rule. 189/189 tests passing overall.
+  Verified end-to-end in a real browser (Playwright, transient dev
+  dependency, removed after the run): a teacher publishes a
+  limited-stock product, a student orders 2 (real stock drops from 3 to
+  1), the teacher confirms payment and drives the order through
+  preparing → shipped → delivered while the student's cancel option
+  disappears the moment payment is confirmed, and a separate order is
+  placed and cancelled by the student while still pending, correctly
+  restoring its product's stock.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI, store/checkout,
+UI,
 real payment gateway integration, audit-log UI, rate limiting,
 concurrent-session detection, HLS/DRM, search.
 
@@ -937,11 +985,25 @@ concurrent-session detection, HLS/DRM, search.
     subscribe via a free promo code to farm rewards; there is no
     rate-limiting or identity verification here, the same honest
     limitation already noted for parent-link requests in Phase 9.
+30. **The store has no real payment gateway, same as subscriptions** —
+    `CONFIRMED` is a manual "I verified real money arrived" action by a
+    teacher/admin (cash, bank transfer, ...), not an automated charge.
+    See the Store section above for why this reuses `OrderStatus`
+    instead of the `Payment` model.
+31. **No shipping address / delivery details on an Order** — the schema
+    has no field for one, so `SHIPPED`/`DELIVERED` are teacher-declared
+    milestones with no logistics data attached; a real deployment would
+    need a schema addition for this.
+32. **No image upload for products** — `Product.images` (`String[]`)
+    exists in the schema but `/teacher/products` doesn't populate it
+    (no file upload wired up this phase, same category of gap as
+    lesson-video uploads being the only wired-up file upload path so
+    far); products are text/price/stock only for now.
 
 ## Test status
 
 ```
-npx vitest run       # 174/174 passing (25 files)
+npx vitest run       # 189/189 passing (26 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -970,9 +1032,11 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 18 — Store: `Product`, `Order`, `OrderItem` exist in the schema
-(unused). Build a real store/checkout flow — reuse the existing
-`PaymentProvider` abstraction from Phase 2 (never fake a successful
-charge) for non-zero orders. Inspect the exact current schema/state at
-the start of the phase before building. Do not restart or re-architect
-what exists above — extend it.
+Phase 19 — Notifications & Announcements: `Announcement` exists in the
+schema (unused) alongside the already-built `notify()`/`Notification`
+plumbing from Phase 5. Build a real announcements system (teacher posts
+one, targeted by `AnnouncementAudience`) surfaced to students/parents,
+and consider whether any of the many `notify()` call sites from prior
+phases should also fan out to announcements or vice versa. Inspect the
+exact current schema/state at the start of the phase before building.
+Do not restart or re-architect what exists above — extend it.

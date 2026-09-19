@@ -15,6 +15,8 @@ const NAV_ITEMS = [
   { href: "/teacher/certificates", label: "الشهادات" },
   { href: "/teacher/profile", label: "ملفي الشخصي" },
   { href: "/teacher/support", label: "الدعم الفني" },
+  { href: "/teacher/products", label: "منتجات المتجر" },
+  { href: "/teacher/orders", label: "طلبات المتجر" },
   { href: "/teacher/banners", label: "إعلانات الصفحة الرئيسية" },
   { href: "/teacher/categories", label: "الأقسام" },
   { href: "/teacher/courses", label: "الكورسات" },
