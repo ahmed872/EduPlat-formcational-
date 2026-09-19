@@ -1,13 +1,14 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 18 session)
+Last updated: 2026-09-19 (Phase 19 session)
 
 ## Current phase
 
-Phase 18 (Store) is complete, on top of Phase 17 (Teacher Profile &
-Support), Phase 16 (Certificates & Referral), Phase 15 (Career
-Guidance), Phase 14 (Achievements), Phase 13 (Leaderboards & Hall of
-Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
+Phase 19 (Notifications & Announcements) is complete, on top of Phase
+18 (Store), Phase 17 (Teacher Profile & Support), Phase 16
+(Certificates & Referral), Phase 15 (Career Guidance), Phase 14
+(Achievements), Phase 13 (Leaderboards & Hall of Fame), Phase 12
+(Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -851,11 +852,49 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   placed and cancelled by the student while still pending, correctly
   restoring its product's stock.
 
+### Notifications & announcements (Phase 19 — new this session)
+- **Real audience resolution, no fabricated groups** (`src/lib/business/announcements.ts`):
+  `resolveAnnouncementStudentIds()` resolves `ALL` to every real
+  `StudentProfile`, `STUDENT` to exactly the named student, and
+  `COURSE`/`CATEGORY` to students genuinely enrolled — reusing the same
+  Entitlement-or-WatchSession "enrolled" definition `analytics.ts` and
+  Phase 8's free-lesson fix already established, so a course-targeted
+  announcement reaches a free-lesson-only watcher too.
+  `AnnouncementAudience.GROUP` has no backing model anywhere in the
+  schema (no `Group`/`StudentGroup` table exists) — rather than
+  fabricate a group concept, it is explicitly rejected with a clear
+  error instead of silently resolving to zero recipients.
+- **Ties directly into Phase 5's already-built notification plumbing**:
+  `publishAnnouncement()` creates the permanent `Announcement` record
+  and immediately fans out a real `Notification` (via the same
+  `notify()` every prior phase already uses) to every resolved
+  recipient — a student sees it appear in their existing 🔔 bell, not
+  just on a separate, easy-to-miss announcements page.
+- **Teacher page** (`/teacher/announcements`): create an announcement
+  (title, body, audience type, and the matching category/course/student
+  picker) and see every past announcement. **Student page**
+  (`/student/announcements`) and **parent page** (`/parent/announcements`):
+  each shows only the announcements that genuinely apply — a student
+  sees `ALL` + any `COURSE`/`CATEGORY` they're really enrolled in + any
+  `STUDENT` announcement addressed to them; a parent sees `ALL` plus any
+  `STUDENT` announcement addressed to one of their own **approved**
+  children only (a still-pending, unapproved link grants nothing, same
+  rule as Phase 9's `assertParentCanAccessStudent`).
+- 12 new tests (`announcements.test.ts`): audience resolution for all
+  four supported types (including the free-lesson-watcher edge case),
+  the `GROUP` rejection, real `Notification` fan-out, missing-target
+  rejection, and the student/parent visibility filters (including the
+  not-yet-approved-parent-link case). 201/201 tests passing overall.
+  Verified end-to-end in a real browser (Playwright, transient dev
+  dependency, removed after the run): a teacher publishes both an
+  `ALL` announcement and a `STUDENT`-targeted one at a specific student;
+  that student sees both on their page and the targeted one in a real
+  🔔 notification; a second student sees only the `ALL` one; a newly
+  registered, unrelated parent also sees only the `ALL` one.
+
 ## Not started (by priority order, all schema-ready)
 
-Email/push notification delivery, announcements
-UI,
-real payment gateway integration, audit-log UI, rate limiting,
+Real payment gateway integration, audit-log UI, rate limiting,
 concurrent-session detection, HLS/DRM, search.
 
 ## Known gaps / honesty notes (per "no fake completion")
@@ -999,11 +1038,22 @@ concurrent-session detection, HLS/DRM, search.
     (no file upload wired up this phase, same category of gap as
     lesson-video uploads being the only wired-up file upload path so
     far); products are text/price/stock only for now.
+33. **`AnnouncementAudience.GROUP` is unsupported, on purpose.** No
+    `Group`/`StudentGroup` model exists anywhere in the schema to back
+    it — `resolveAnnouncementStudentIds()` throws a clear error rather
+    than silently notifying zero people. Adding real group targeting
+    would need a new schema model.
+34. **No per-recipient read/seen tracking for an `Announcement` itself**
+    (unlike `Notification.readAt`) — a student/parent's announcements
+    page always shows every applicable announcement ever published,
+    with no "unread" distinction of its own; the real unread signal
+    lives on the fanned-out `Notification` row instead (via the
+    existing 🔔 bell's `readAt`/mark-all-read).
 
 ## Test status
 
 ```
-npx vitest run       # 189/189 passing (26 files)
+npx vitest run       # 201/201 passing (27 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1032,11 +1082,12 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 19 — Notifications & Announcements: `Announcement` exists in the
-schema (unused) alongside the already-built `notify()`/`Notification`
-plumbing from Phase 5. Build a real announcements system (teacher posts
-one, targeted by `AnnouncementAudience`) surfaced to students/parents,
-and consider whether any of the many `notify()` call sites from prior
-phases should also fan out to announcements or vice versa. Inspect the
-exact current schema/state at the start of the phase before building.
-Do not restart or re-architect what exists above — extend it.
+Phase 20 — Search: no dedicated search model exists in the schema (a
+real search feature would query existing content — `Course`, `Lesson`,
+`Short`, `QuestionBank`/`Question`, `CareerField`, `Product`, ... —
+rather than needing a new table). Build a real search across published,
+genuinely-accessible content, respecting the same entitlement/free-
+content rules `checkVideoAccess` already enforces (never surface a
+paid lesson's content to a student who isn't entitled to it). Inspect
+the exact current schema/state at the start of the phase before
+building. Do not restart or re-architect what exists above — extend it.

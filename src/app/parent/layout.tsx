@@ -17,6 +17,9 @@ export default async function ParentLayout({ children }: { children: ReactNode }
           <Link href="/parent/support" className="text-sm text-gray-500 hover:underline">
             الدعم الفني
           </Link>
+          <Link href="/parent/announcements" className="text-sm text-gray-500 hover:underline">
+            الإعلانات
+          </Link>
         </div>
         <form
           action={async () => {
