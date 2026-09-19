@@ -6,6 +6,7 @@ import { NotificationBell } from "@/components/notification-bell";
 
 const NAV_ITEMS = [
   { href: "/student", label: "لوحة التحكم" },
+  { href: "/student/search", label: "البحث" },
   { href: "/student/analytics", label: "تحليلاتي" },
   { href: "/student/exams", label: "الامتحانات" },
   { href: "/student/saved-moments", label: "لحظاتي المحفوظة" },

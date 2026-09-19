@@ -1,14 +1,14 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 19 session)
+Last updated: 2026-09-19 (Phase 20 session)
 
 ## Current phase
 
-Phase 19 (Notifications & Announcements) is complete, on top of Phase
-18 (Store), Phase 17 (Teacher Profile & Support), Phase 16
-(Certificates & Referral), Phase 15 (Career Guidance), Phase 14
-(Achievements), Phase 13 (Leaderboards & Hall of Fame), Phase 12
-(Games), Phase 11 (Promo & Marketing),
+Phase 20 (Search) is complete, on top of Phase 19 (Notifications &
+Announcements), Phase 18 (Store), Phase 17 (Teacher Profile &
+Support), Phase 16 (Certificates & Referral), Phase 15 (Career
+Guidance), Phase 14 (Achievements), Phase 13 (Leaderboards & Hall of
+Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -892,10 +892,51 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   🔔 notification; a second student sees only the `ALL` one; a newly
   registered, unrelated parent also sees only the `ALL` one.
 
+### Search (Phase 20 — new this session)
+- **No fabricated access, only a navigation shortcut** (`src/lib/business/search.ts`):
+  `searchForStudent()` searches only what a student can already discover
+  elsewhere — published courses, published lessons in published courses,
+  published Shorts, in-stock published products, and career fields.
+  Clicking a lesson result still lands on `/student/videos/[videoId]`,
+  which runs the exact same `checkVideoAccess`/`canAccessLesson` gate as
+  normal browsing — search never grants access it wouldn't otherwise
+  have, and a lesson with no uploaded video is shown informationally
+  (no link) rather than a broken/fabricated one. `searchForTeacher()`
+  additionally surfaces drafts (a teacher is managing content, not
+  discovering it) and question banks, each linking to its real
+  management page.
+- **Honest about missing per-item pages**: there is no student-facing
+  course detail page, per-product page, or per-career-field page in the
+  app today — a matched `Course`/`Product`/`CareerField` result is shown
+  informationally (title + context) rather than linking to a page that
+  doesn't exist; only `Lesson` (when it has a video) and `Short` results
+  are clickable for students.
+- **UI**: `/student/search` and `/teacher/search`, a plain GET-query
+  search box (`?q=...`, no client JS required) consistent with the
+  leaderboard/hall-of-fame page pattern from Phase 13.
+- 9 new tests (`search.test.ts`): case-insensitive partial matching,
+  draft-course exclusion for students (but inclusion for teachers),
+  unpublished-course-lesson exclusion, the video-link-only-when-a-video-
+  exists rule, out-of-stock product exclusion, and question-bank
+  matching. 210/210 tests passing overall. Verified end-to-end in a
+  real browser (Playwright, transient dev dependency, removed after the
+  run): a teacher publishes a course+lesson and separately creates an
+  unpublished draft course; the teacher's search finds the draft with a
+  working link to manage it; a student's search finds the published
+  course (informational only) and lesson, and returns zero results for
+  the draft course's title.
+- **Environment note, not a code bug**: the first browser-based
+  verification attempt hit a one-time `MissingCSRF` error on the very
+  first credentials sign-in against a freshly restarted dev server
+  (student registration and every subsequent request in the same run
+  worked normally) — a clean rerun with no code changes passed all 9
+  steps, confirming this was a dev-server-restart race, not a defect in
+  `login-form.tsx` or the NextAuth configuration.
+
 ## Not started (by priority order, all schema-ready)
 
 Real payment gateway integration, audit-log UI, rate limiting,
-concurrent-session detection, HLS/DRM, search.
+concurrent-session detection, HLS/DRM.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -1049,11 +1090,26 @@ concurrent-session detection, HLS/DRM, search.
     with no "unread" distinction of its own; the real unread signal
     lives on the fanned-out `Notification` row instead (via the
     existing 🔔 bell's `readAt`/mark-all-read).
+35. **Search has no per-item detail pages to link to for `Course`,
+    `Product`, or `CareerField`** — those results are informational
+    (title + context) rather than clickable, since no such page exists
+    anywhere in the app yet (see the Search section above). Adding one
+    would let search link there without any change to `search.ts`
+    itself.
+36. **Search is a simple `contains`/case-insensitive title match**, not
+    full-text/fuzzy search — a typo or a search by body/description
+    text (beyond `QuestionBank.description`) won't match. Real full-text
+    search would need a dedicated search index/extension not set up in
+    this environment.
+37. **No search for parents** — parents don't browse course content
+    directly, so search was scoped to student + teacher only, the same
+    reasoning Phase 19 used to skip COURSE/CATEGORY announcements for
+    parents.
 
 ## Test status
 
 ```
-npx vitest run       # 201/201 passing (27 files)
+npx vitest run       # 210/210 passing (28 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1082,12 +1138,14 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 20 — Search: no dedicated search model exists in the schema (a
-real search feature would query existing content — `Course`, `Lesson`,
-`Short`, `QuestionBank`/`Question`, `CareerField`, `Product`, ... —
-rather than needing a new table). Build a real search across published,
-genuinely-accessible content, respecting the same entitlement/free-
-content rules `checkVideoAccess` already enforces (never surface a
-paid lesson's content to a student who isn't entitled to it). Inspect
-the exact current schema/state at the start of the phase before
-building. Do not restart or re-architect what exists above — extend it.
+Phase 21 — Advanced Security (final phase of the original 21-phase
+plan): `AuditLog` exists in the schema and is already written to by a
+few flows (e.g. `confirmPayment`/`rejectPayment`/`refundPayment` in
+subscription.ts) but has no UI anywhere. This phase's scope, per the
+master spec, covers things like an audit-log viewer, rate limiting, and
+concurrent-session detection — none of which have dedicated schema
+support yet beyond `AuditLog` itself. Inspect the exact current
+schema/state (including every existing `AuditLog`-writing call site)
+at the start of the phase before building, and be honest about what
+genuinely needs new schema vs. what can be built from what exists. Do
+not restart or re-architect what exists above — extend it.
