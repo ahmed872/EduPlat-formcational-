@@ -11,6 +11,8 @@ const NAV_ITEMS = [
   { href: "/student/saved-moments", label: "لحظاتي المحفوظة" },
   { href: "/student/parent-requests", label: "طلبات أولياء الأمور" },
   { href: "/student/games", label: "الألعاب" },
+  { href: "/student/leaderboards", label: "لوحة الصدارة" },
+  { href: "/student/hall-of-fame", label: "قاعة الشرف" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];

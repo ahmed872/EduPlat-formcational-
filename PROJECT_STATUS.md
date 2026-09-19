@@ -1,10 +1,11 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 12 session)
+Last updated: 2026-09-19 (Phase 13 session)
 
 ## Current phase
 
-Phase 12 (Games) is complete, on top of Phase 11 (Promo & Marketing),
+Phase 13 (Leaderboards & Hall of Fame) is complete, on top of Phase 12
+(Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -517,10 +518,67 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   attempt appears on the teacher's games page, and the student's points
   increase by the score earned.
 
+### Leaderboards & Hall of Fame (Phase 13 — new this session)
+- **Business logic** (`src/lib/business/leaderboard.ts`):
+  `recomputeLeaderboard()` recomputes a game's ranking for the
+  daily/weekly/monthly period containing "now" directly from real
+  `GameSession` rows (each student's *best* score inside that period's
+  date range), replacing the cached `LeaderboardSnapshot` rows for that
+  exact `(gameId, period, periodKey)` in one transaction — never additive,
+  so a recompute can't leave stale ranks behind. `getLeaderboard()` always
+  recomputes before reading, so the displayed ranking is never more than
+  one page-load stale (same "no scheduler in this environment" pattern as
+  `syncExpiredSubscriptions()` and Phase 10's reports).
+  `generateHallOfFameCandidates()` sums each student's `GameSession`
+  scores over a whole calendar month and upserts the top N as
+  `HallOfFameEntry` rows — but every one is created **unapproved**;
+  `approveHallOfFameEntry()` is the only path that flips
+  `approved`/`approvedAt`/`approvedById`, and `getApprovedHallOfFame()` is
+  the only read path students/guests ever see, so a candidate never
+  becomes publicly visible on its own (same approval-gated-visibility
+  pattern as Phase 9's `ParentStudent.approvedAt`).
+- **Teacher pages**: `/teacher/leaderboards` (pick a game + period via GET
+  query, view the ranked table); `/teacher/hall-of-fame` (pick a month,
+  generate that month's candidates, see approved vs. "بانتظار الاعتماد"
+  status per row, approve one at a time).
+- **Student pages**: `/student/leaderboards` (same game/period selector,
+  own row marked "(أنت)"); `/student/hall-of-fame` (approved-only,
+  public-facing list — an unapproved candidate is invisible here no
+  matter how high their score).
+- **Real schema gap found and fixed before commit**: `LeaderboardSnapshot.gameId`
+  and `.studentId` were plain string columns with no `@relation` declared
+  (unlike every other foreign-key-shaped field in the schema), so
+  `prisma.leaderboardSnapshot.findMany({ include: { student: ... } })`
+  failed to typecheck (`Type '{ student: {...} }' is not assignable to
+  type 'never'`). Fixed by adding proper `@relation` fields on
+  `LeaderboardSnapshot` plus the matching back-arrays
+  (`Game.leaderboardSnapshots`, `StudentProfile.leaderboardEntries`), via
+  a new migration (`20260919102115_leaderboard_relations`) — no data loss,
+  since the table was unused before this phase.
+- **No `CUSTOM` period support in the UI** — `LeaderboardPeriod.CUSTOM`
+  exists in the schema and `getPeriodKey()` intentionally throws for it
+  (a custom period needs an explicit `periodKey` with no date-derived
+  default), but no teacher-facing "define a custom period" flow was in
+  scope for this phase; only `DAILY`/`WEEKLY`/`MONTHLY` are selectable.
+- 9 new tests (`leaderboard.test.ts`, covering period-key derivation,
+  recompute replacing rather than accumulating rows, best-score-per-student
+  ranking, and the full generate→hidden→approve→visible Hall of Fame
+  flow); 122/122 passing overall. Verified end-to-end in a real browser
+  (Playwright, transient dev dependency, removed after the run): a teacher
+  creates a game with one question, a student registers and plays it,
+  the student sees themselves (marked "(أنت)") on their own daily
+  leaderboard for that game, the teacher sees the identical ranking on
+  the teacher-side page, the teacher generates this month's Hall of Fame
+  candidates (student appears, status "بانتظار الاعتماد"), the same
+  student's public Hall of Fame page does **not** show the unapproved
+  entry, the teacher approves it, and a **freshly logged-in** student
+  session then sees it publicly — confirming the approval gate is
+  enforced server-side, not just hidden in one UI state.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI, leaderboards + Hall of Fame, achievements engine,
+UI, achievements engine,
 career guidance content + exploration quiz, certificates + public
 verification page, referral system UI, support ticket UI, store/checkout,
 real payment gateway integration, audit-log UI, rate limiting,
@@ -600,15 +658,25 @@ concurrent-session detection, HLS/DRM, search.
     multiple-choice round, not a canvas/arcade-style experience — no game
     engine is available in this environment (same category of honest gap
     as Phase 7's experiments).
-19. **No leaderboards yet reading `GameSession.score`.** `LeaderboardSnapshot`
-    and `HallOfFameEntry` exist in the schema (Phase 13's territory) but
-    nothing computes or displays a ranking from the scores Phase 12 now
-    records for real.
+19. ~~No leaderboards yet reading `GameSession.score`~~ — **fixed in
+    Phase 13**: `recomputeLeaderboard()`/`getLeaderboard()` compute real
+    daily/weekly/monthly rankings from `GameSession.score`, and Hall of
+    Fame candidates are proposed from the same real scores (never shown
+    publicly until a teacher approves).
+20. **No `CUSTOM` leaderboard period UI.** `LeaderboardPeriod.CUSTOM` exists
+    in the schema; `getPeriodKey()` deliberately throws for it since a
+    custom period needs an explicit `periodKey` with no date-derived
+    default, but no teacher-facing flow to define one was built this
+    phase — only `DAILY`/`WEEKLY`/`MONTHLY` are selectable.
+21. **Hall of Fame candidate generation is teacher-triggered, not
+    scheduled** — same "no scheduler in this environment" honesty note as
+    `syncExpiredSubscriptions()` and Phase 10's reports; a real deployment
+    would run `generateHallOfFameCandidates()` from a monthly cron job.
 
 ## Test status
 
 ```
-npx vitest run       # 113/113 passing (18 files)
+npx vitest run       # 122/122 passing (19 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -637,13 +705,10 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 13 — Leaderboards & Hall of Fame: `LeaderboardSnapshot` and
-`HallOfFameEntry` (schema exists, unused). Build real ranking computation
-from the `GameSession.score` and `StudentProfile.points` data Phase 12
-now genuinely produces, plus student-/teacher-facing leaderboard views.
-There is no scheduler in this environment (same note as
-`syncExpiredSubscriptions()` and Phase 10's reports), so snapshot
-recomputation will likely need to be triggered the same way — on page
-load or by a teacher/admin action — rather than a real cron job. Inspect
-the exact current schema/state at the start of the phase before building.
-Do not restart or re-architect what exists above — extend it.
+Phase 14 — Achievements: `Achievement` and `StudentAchievement` (schema
+exists, unused). Build real unlock-condition evaluation (e.g. tied to
+study streaks, quiz passes, experiment/game completion — whatever the
+existing `Achievement` model's fields actually support) plus
+student-/teacher-facing UI to view/award them. Inspect the exact current
+schema/state at the start of the phase before building. Do not restart or
+re-architect what exists above — extend it.

@@ -8,6 +8,8 @@ const NAV_ITEMS = [
   { href: "/teacher/analytics", label: "التحليلات" },
   { href: "/teacher/reports", label: "تقارير الطلاب" },
   { href: "/teacher/games", label: "الألعاب" },
+  { href: "/teacher/leaderboards", label: "لوحة الصدارة" },
+  { href: "/teacher/hall-of-fame", label: "قاعة الشرف" },
   { href: "/teacher/banners", label: "إعلانات الصفحة الرئيسية" },
   { href: "/teacher/categories", label: "الأقسام" },
   { href: "/teacher/courses", label: "الكورسات" },

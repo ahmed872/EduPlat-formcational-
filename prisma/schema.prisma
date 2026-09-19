@@ -72,6 +72,7 @@ model StudentProfile {
   achievements          StudentAchievement[]
   gameSessions          GameSession[]
   hallOfFameEntries     HallOfFameEntry[]
+  leaderboardEntries    LeaderboardSnapshot[]
   promoRedemptions      PromoRedemption[]
   parentReports         ParentReport[]
   lessonQuestions       LessonQuestion[]
@@ -764,7 +765,8 @@ model Game {
   durationMinutes Int      @default(10)
   active          Boolean  @default(true)
 
-  sessions GameSession[]
+  sessions             GameSession[]
+  leaderboardSnapshots LeaderboardSnapshot[]
 }
 
 model GameSession {
@@ -787,13 +789,16 @@ enum LeaderboardPeriod {
   CUSTOM
 }
 
-// Cached ranking snapshot; recomputed by a scheduled job from GameSession.
+// Cached ranking snapshot; recomputed opportunistically from GameSession
+// (no scheduler is available in this environment — see recomputeLeaderboard()).
 model LeaderboardSnapshot {
   id        String            @id @default(cuid())
   gameId    String
+  game      Game              @relation(fields: [gameId], references: [id], onDelete: Cascade)
   period    LeaderboardPeriod
   periodKey String // e.g. "2026-09-18" / "2026-W38" / "2026-09"
   studentId String
+  student   StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   rank      Int
   score     Int
   createdAt DateTime          @default(now())
