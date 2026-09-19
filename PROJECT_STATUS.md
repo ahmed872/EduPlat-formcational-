@@ -1,17 +1,17 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-18 (Phase 10 session)
+Last updated: 2026-09-19 (Phase 11 session)
 
 ## Current phase
 
-Phase 10 (Reports) is complete, on top of Phase 9 (Parent System), Phase 8
-(Student Analytics), Phase 7 (Interactive Experiments), Phase 6 (Question
-Bank & Exams), Phase 5 (Student Learning Features), Phase 4 (Shorts &
-Timestamp System), Phase 3 (Video Storage & Secure Playback), Phase 2
-(Subscription & Payment System), and the Phase-1 foundation (Foundation →
-Auth/Roles → Database → Teacher CMS → Courses/Lessons/Videos → Video
-access/security → Subscriptions/Entitlements → Student dashboard →
-Progress/Timer → Quizzes/Unlocking).
+Phase 11 (Promo & Marketing) is complete, on top of Phase 10 (Reports),
+Phase 9 (Parent System), Phase 8 (Student Analytics), Phase 7 (Interactive
+Experiments), Phase 6 (Question Bank & Exams), Phase 5 (Student Learning
+Features), Phase 4 (Shorts & Timestamp System), Phase 3 (Video Storage &
+Secure Playback), Phase 2 (Subscription & Payment System), and the Phase-1
+foundation (Foundation → Auth/Roles → Database → Teacher CMS →
+Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
+→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
 
 ## Completed features
 
@@ -445,6 +445,32 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   exact report and comment, and a second, unrelated parent hitting the
   same reports URL directly gets a 404.
 
+### Promo & marketing (Phase 11 — new this session)
+- **`MarketingBanner` model (new)**: distinct from `PromoCode` (a
+  checkout-time discount, Phase 2) and from `Announcement` (an internal,
+  logged-in-audience notice, schema-ready but still unbuilt) — this is
+  genuinely public marketing copy shown to guests, with an optional CTA
+  label/link (typically pointing at `/register` or a course), an optional
+  active window (`startsAt`/`endsAt`), and a manual `active` toggle.
+- **Business logic** (`src/lib/business/marketing.ts`):
+  `getActiveBanners()` returns only banners that are `active` AND whose
+  window (if any) currently contains "now" — a null bound on either side
+  means unbounded on that side, mirroring how `PromoCode.expiresAt` is
+  already treated.
+- **Teacher page** (`/teacher/banners`): create a banner, toggle it
+  active/inactive, delete it.
+- **Public landing page** (`/`): renders every currently-active banner
+  above the hero content, reachable by guests with no login — the same
+  "genuinely public, no auth" pattern already established for Shorts in
+  Phase 4.
+- 6 new tests (`marketing.test.ts`) covering the active-window filtering
+  (no bounds, before start, after end, inside window, inactive-overrides-
+  window, ordering); 103/103 passing overall. Verified end-to-end in a
+  real browser: a teacher creates an always-on banner plus one
+  not-yet-started and one already-ended banner — a brand-new, logged-out
+  browser context sees only the always-on one with a working `/register`
+  CTA link — deactivating it removes it for guests immediately.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
@@ -528,7 +554,7 @@ concurrent-session detection, HLS/DRM, search.
 ## Test status
 
 ```
-npx vitest run       # 97/97 passing (16 files)
+npx vitest run       # 103/103 passing (17 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -557,11 +583,11 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 11 — Promo & Marketing: the promo code system (`PromoCode`,
-`PromoApplicableContent`, `PromoRedemption`) already exists and is fully
-tested from Phase 2, but this phase's spec scope is broader (marketing
-surfaces — banners/landing content, referral-adjacent promo campaigns,
-etc.). Inspect the exact current schema/state and what Phase 2 already
-covers at the start of the phase before building, so this phase extends
-rather than duplicates the existing promo-code admin UI. Do not restart or
-re-architect what exists above — extend it.
+Phase 12 — Games: `Game`, `GameSession` (schema exists, unused). Build a
+teacher-facing game editor and a student-facing play surface for at least
+one real, honest mini/daily game type — matching the same "no fake
+engine" honesty already established for Phase 7's experiments (a generic,
+functional interaction rather than a fabricated game engine, if no real
+game-rendering library is available in this environment). Inspect the
+exact current schema/state at the start of the phase before building. Do
+not restart or re-architect what exists above — extend it.

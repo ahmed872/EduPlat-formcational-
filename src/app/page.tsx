@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { getActiveBanners } from "@/lib/business/marketing";
 
 export default async function HomePage() {
-  const session = await auth();
+  const [session, banners] = await Promise.all([auth(), getActiveBanners(prisma)]);
 
   const dashboardHref = session
     ? session.user.role === "TEACHER_ADMIN"
@@ -14,6 +16,27 @@ export default async function HomePage() {
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-6 px-4 py-16 text-center">
+      {banners.length > 0 && (
+        <div className="flex w-full max-w-xl flex-col gap-3">
+          {banners.map((banner) => (
+            <div
+              key={banner.id}
+              className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-right"
+            >
+              <p className="font-semibold text-indigo-900">{banner.title}</p>
+              {banner.body && <p className="mt-1 text-sm text-indigo-800">{banner.body}</p>}
+              {banner.ctaLabel && banner.ctaHref && (
+                <Link
+                  href={banner.ctaHref}
+                  className="mt-2 inline-block text-sm font-medium text-indigo-700 hover:underline"
+                >
+                  {banner.ctaLabel} ←
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <h1 className="text-3xl font-bold">منصة إديوبلات التعليمية</h1>
       <p className="max-w-xl text-gray-600">
         منصة تعليمية بمحتوى مسجّل بالكامل — بدون حصص مباشرة أو بث مباشر.

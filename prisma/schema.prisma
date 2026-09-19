@@ -871,6 +871,24 @@ model PromoRedemption {
   @@unique([promoId, studentId])
 }
 
+// Public marketing banner, shown to guests on the landing page — distinct
+// from PromoCode (a checkout-time discount) and from Announcement (an
+// internal, logged-in-audience notice). ctaHref commonly points at
+// /register or a promo-carrying checkout link; the code itself is never
+// stored here, just promotional copy pointing at it.
+model MarketingBanner {
+  id        String    @id @default(cuid())
+  title     String
+  body      String?
+  ctaLabel  String?
+  ctaHref   String?
+  startsAt  DateTime?
+  endsAt    DateTime?
+  active    Boolean   @default(true)
+  order     Int       @default(0)
+  createdAt DateTime  @default(now())
+}
+
 // =========================================================================
 // TEACHER NOTES / PARENT REPORTS / NOTIFICATIONS / ANNOUNCEMENTS
 // =========================================================================
