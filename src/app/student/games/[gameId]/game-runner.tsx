@@ -1,0 +1,121 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { GameQuestion } from "@/lib/business/games";
+import { finishPlay } from "./actions";
+
+export function GameRunner({
+  gameId,
+  sessionId,
+  questions,
+  durationMinutes,
+  startedAt,
+}: {
+  gameId: string;
+  sessionId: string;
+  questions: GameQuestion[];
+  durationMinutes: number;
+  startedAt: string;
+}) {
+  const router = useRouter();
+  const [index, setIndex] = useState(0);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [finished, setFinished] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const endsAtMs = useMemo(
+    () => new Date(startedAt).getTime() + durationMinutes * 60_000,
+    [startedAt, durationMinutes],
+  );
+  const [remainingSeconds, setRemainingSeconds] = useState(() =>
+    Math.max(0, Math.round((endsAtMs - Date.now()) / 1000)),
+  );
+
+  async function finish(finalScore: number) {
+    if (finished) return;
+    setFinished(true);
+    setSubmitting(true);
+    await finishPlay(gameId, sessionId, finalScore);
+    setSubmitting(false);
+    router.refresh();
+  }
+
+  useEffect(() => {
+    if (finished) return;
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.round((endsAtMs - Date.now()) / 1000));
+      setRemainingSeconds(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        finish(correctCount);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endsAtMs, finished, correctCount]);
+
+  if (finished) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 text-center">
+        <p className="text-lg font-semibold">
+          {submitting ? "جارٍ الحفظ..." : `انتهت اللعبة! نتيجتك: ${correctCount}`}
+        </p>
+      </div>
+    );
+  }
+
+  if (questions.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
+        لا توجد أسئلة في هذه اللعبة بعد.
+      </div>
+    );
+  }
+
+  const question = questions[index % questions.length];
+
+  function handleAnswer(choiceIndex: number) {
+    const isCorrect = choiceIndex === question.correctIndex;
+    const nextCorrect = isCorrect ? correctCount + 1 : correctCount;
+    setCorrectCount(nextCorrect);
+
+    if (index + 1 >= questions.length) {
+      finish(nextCorrect);
+    } else {
+      setIndex(index + 1);
+    }
+  }
+
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between text-sm">
+        <span>
+          السؤال {index + 1} من {questions.length}
+        </span>
+        <span className="font-mono font-semibold">
+          {minutes}:{String(seconds).padStart(2, "0")}
+        </span>
+      </div>
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <p className="mb-4 font-medium">{question.prompt}</p>
+        <div className="flex flex-col gap-2">
+          {question.choices.map((choice, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => handleAnswer(i)}
+              className="rounded-md border border-gray-300 px-4 py-2 text-right hover:bg-indigo-50"
+            >
+              {choice}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-sm text-gray-500">النقاط الحالية: {correctCount}</p>
+    </div>
+  );
+}

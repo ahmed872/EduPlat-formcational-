@@ -1,17 +1,18 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 11 session)
+Last updated: 2026-09-19 (Phase 12 session)
 
 ## Current phase
 
-Phase 11 (Promo & Marketing) is complete, on top of Phase 10 (Reports),
-Phase 9 (Parent System), Phase 8 (Student Analytics), Phase 7 (Interactive
-Experiments), Phase 6 (Question Bank & Exams), Phase 5 (Student Learning
-Features), Phase 4 (Shorts & Timestamp System), Phase 3 (Video Storage &
-Secure Playback), Phase 2 (Subscription & Payment System), and the Phase-1
-foundation (Foundation → Auth/Roles → Database → Teacher CMS →
-Courses/Lessons/Videos → Video access/security → Subscriptions/Entitlements
-→ Student dashboard → Progress/Timer → Quizzes/Unlocking).
+Phase 12 (Games) is complete, on top of Phase 11 (Promo & Marketing),
+Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
+Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
+5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
+3 (Video Storage & Secure Playback), Phase 2 (Subscription & Payment
+System), and the Phase-1 foundation (Foundation → Auth/Roles → Database →
+Teacher CMS → Courses/Lessons/Videos → Video access/security →
+Subscriptions/Entitlements → Student dashboard → Progress/Timer →
+Quizzes/Unlocking).
 
 ## Completed features
 
@@ -471,10 +472,55 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   browser context sees only the always-on one with a working `/register`
   CTA link — deactivating it removes it for guests immediately.
 
+### Games (Phase 12 — new this session)
+- **Business logic** (`src/lib/business/games.ts`): `canPlayGame()`
+  gates play by real rules — `MINI` games are always replayable; a
+  `DAILY_MAIN` game only opens after its configured `dailyOpenTime`
+  ("HH:MM") and allows exactly one session per calendar day.
+  `startGameSession()` re-checks the same gate before creating a row (so
+  it can't be bypassed by calling the action directly).
+  `submitGameScore()` ends the session with its final score,
+  ownership-checked and rejecting a second submission for the same
+  session, and credits that score to `StudentProfile.points` — the one
+  place that field is written anywhere in the codebase, since nothing
+  had consumed it before this phase.
+- **Teacher page** (`/teacher/games`): create a game (type, name, daily
+  open time for `DAILY_MAIN`, duration), add/remove multiple-choice
+  questions per game (stored in `Game.config.questions`, self-contained —
+  not tied to the `Question`/`QuestionBank` models, since a game is
+  deliberately lighter-weight than a full exam), toggle active/inactive,
+  delete.
+- **Student pages** (`/student/games`, `/student/games/[gameId]/play`):
+  a list showing each game's real play-eligibility (open now / not yet
+  open today / already played today / inactive), and a real timed
+  multiple-choice round — one question at a time under a live countdown
+  (`durationMinutes`), scored by correct answers, submitted the moment
+  time runs out or the last question is answered.
+- **Real bug found and fixed before commit**: `startGameSession()`
+  originally let Prisma's `@default(now())` set `GameSession.startedAt`
+  unconditionally, ignoring the `now` parameter used to simulate a
+  specific moment — harmless in production (where `now` is always real),
+  but it meant the "one `DAILY_MAIN` play per day, resets the next day"
+  rule was untestable and, more importantly, any future caller that did
+  need a specific `startedAt` (e.g. backfilling) would have silently
+  gotten the wrong one. Fixed by explicitly passing `startedAt: params.now
+  ?? new Date()`. Caught by a dedicated test asserting a session started
+  "yesterday" doesn't block today's play.
+- **No real game engine.** Same honesty note as Phase 7's experiments: no
+  canvas/game-rendering library is available in this environment, so the
+  "game" is a genuine, functional timed multiple-choice round rather than
+  a fabricated arcade experience — real scoring, real timing, real
+  per-day gating, simple presentation.
+- 10 new tests (`games.test.ts`); 113/113 passing overall. Verified
+  end-to-end in a real browser: a teacher creates a MINI game with two
+  questions, a student plays it and answers both correctly, the recorded
+  attempt appears on the teacher's games page, and the student's points
+  increase by the score earned.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI, mini/daily games + leaderboards + Hall of Fame, achievements engine,
+UI, leaderboards + Hall of Fame, achievements engine,
 career guidance content + exploration quiz, certificates + public
 verification page, referral system UI, support ticket UI, store/checkout,
 real payment gateway integration, audit-log UI, rate limiting,
@@ -550,11 +596,19 @@ concurrent-session detection, HLS/DRM, search.
     always `null` — the report is a real data snapshot rendered as an
     HTML page, not a downloadable file, since no PDF-rendering pipeline
     is available here.
+18. **No real game-rendering engine.** Games are a real, functional timed
+    multiple-choice round, not a canvas/arcade-style experience — no game
+    engine is available in this environment (same category of honest gap
+    as Phase 7's experiments).
+19. **No leaderboards yet reading `GameSession.score`.** `LeaderboardSnapshot`
+    and `HallOfFameEntry` exist in the schema (Phase 13's territory) but
+    nothing computes or displays a ranking from the scores Phase 12 now
+    records for real.
 
 ## Test status
 
 ```
-npx vitest run       # 103/103 passing (17 files)
+npx vitest run       # 113/113 passing (18 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -583,11 +637,13 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 12 — Games: `Game`, `GameSession` (schema exists, unused). Build a
-teacher-facing game editor and a student-facing play surface for at least
-one real, honest mini/daily game type — matching the same "no fake
-engine" honesty already established for Phase 7's experiments (a generic,
-functional interaction rather than a fabricated game engine, if no real
-game-rendering library is available in this environment). Inspect the
-exact current schema/state at the start of the phase before building. Do
-not restart or re-architect what exists above — extend it.
+Phase 13 — Leaderboards & Hall of Fame: `LeaderboardSnapshot` and
+`HallOfFameEntry` (schema exists, unused). Build real ranking computation
+from the `GameSession.score` and `StudentProfile.points` data Phase 12
+now genuinely produces, plus student-/teacher-facing leaderboard views.
+There is no scheduler in this environment (same note as
+`syncExpiredSubscriptions()` and Phase 10's reports), so snapshot
+recomputation will likely need to be triggered the same way — on page
+load or by a teacher/admin action — rather than a real cron job. Inspect
+the exact current schema/state at the start of the phase before building.
+Do not restart or re-architect what exists above — extend it.
