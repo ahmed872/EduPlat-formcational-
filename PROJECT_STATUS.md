@@ -1,12 +1,13 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 16 session)
+Last updated: 2026-09-19 (Phase 17 session)
 
 ## Current phase
 
-Phase 16 (Certificates & Referral) is complete, on top of Phase 15
-(Career Guidance), Phase 14 (Achievements), Phase 13 (Leaderboards &
-Hall of Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
+Phase 17 (Teacher Profile & Support) is complete, on top of Phase 16
+(Certificates & Referral), Phase 15 (Career Guidance), Phase 14
+(Achievements), Phase 13 (Leaderboards & Hall of Fame), Phase 12
+(Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -752,10 +753,60 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   promo code, a second student registers with the referrer's code and
   also subscribes, and the referrer's account shows the reward applied.
 
+### Teacher profile & support (Phase 17 — new this session)
+- **Teacher profile** (`src/lib/business/teacher-profile.ts`): `TeacherProfile`
+  existed in the schema since Foundation (and the seed script already
+  created an empty row for the seeded teacher) but had no UI anywhere.
+  `getTeacherProfile()` returns the profile plus the teacher's own
+  **published** courses (drafts excluded); `updateTeacherProfile()`
+  upserts bio/photoUrl/education/experience/philosophy.
+  `/teacher/profile` is the teacher's own edit form, linking to their
+  real public page. `/teachers/[teacherId]` is genuinely public (no
+  login, outside `proxy.ts`'s role-gated prefixes, same pattern as
+  Shorts/certificate verification) and shows the bio and published
+  course list for a real teacher, or a 404 for an unknown/profile-less
+  user id.
+- **Support tickets** (`src/lib/business/support.ts`): `createSupportTicket()`
+  (student or parent, optionally naming which of the parent's *approved*
+  children it's about — enforced server-side, not just hidden in the
+  dropdown); `replyToTicket()` lets either the ticket's own author or any
+  teacher/admin post a reply, and auto-advances a still-`OPEN` ticket to
+  `IN_PROGRESS` the moment staff replies (real state, not a status the
+  teacher has to remember to set); `updateTicketStatus()` is the
+  teacher-only path to `WAITING`/`RESOLVED`/`CLOSED`.
+  `assertCanViewTicket()` restricts a student/parent to their own
+  tickets (an unrelated user gets a 404, same pattern as Phase 9's
+  `assertParentCanAccessStudent`), while any teacher/admin can view all.
+  `/student/support` and `/parent/support` (create + list + thread
+  view), `/teacher/support` (all tickets, filterable by status, with a
+  reply + status-control thread view). A `CLOSED` ticket's reply form is
+  hidden — the last officially-closed word is the teacher's status
+  change, not a race with a late reply.
+- 14 new tests (`teacher-profile.test.ts`, `support.test.ts`): published-
+  only course listing, upsert-not-duplicate on profile save,
+  ticket-view/reply ownership enforcement, the OPEN→IN_PROGRESS
+  auto-transition (and that it never *overrides* a status a teacher
+  already advanced further), author/status filtering. 174/174 tests
+  passing overall. Verified end-to-end in a real browser (Playwright,
+  transient dev dependency, removed after the run): a teacher edits
+  their profile and a logged-out guest immediately sees the saved bio on
+  the public page; a student opens a ticket, a teacher replies (ticket
+  auto-moves to "قيد المعالجة"), the student sees the reply and new
+  status, the teacher marks it resolved then closed (hiding the reply
+  form), and a separately registered parent successfully opens their own
+  account-level ticket.
+- **Known gap**: `Course.teacherId` is a plain string field with no
+  `@relation` declared to `User` (unlike almost every other foreign-key-
+  shaped field in the schema) — harmless for this phase's read pattern
+  (a plain `WHERE teacherId = ...` filter, no `include` needed), but the
+  same category of latent gap Phase 13 found and fixed for
+  `LeaderboardSnapshot` should be watched for if a future phase ever
+  needs to `include` a course's teacher relation.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI, support ticket UI, store/checkout,
+UI, store/checkout,
 real payment gateway integration, audit-log UI, rate limiting,
 concurrent-session detection, HLS/DRM, search.
 
@@ -890,7 +941,7 @@ concurrent-session detection, HLS/DRM, search.
 ## Test status
 
 ```
-npx vitest run       # 160/160 passing (23 files)
+npx vitest run       # 174/174 passing (25 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -919,10 +970,9 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 17 — Teacher Profile & Support: `SupportTicket`,
-`SupportTicketAttachment`, `SupportTicketReply` exist in the schema
-(unused) — check for any teacher-profile-specific model too. Build a
-support ticket system (student/parent opens a ticket, teacher/admin
-replies) and a teacher-facing public/semi-public profile page. Inspect
-the exact current schema/state at the start of the phase before
-building. Do not restart or re-architect what exists above — extend it.
+Phase 18 — Store: `Product`, `Order`, `OrderItem` exist in the schema
+(unused). Build a real store/checkout flow — reuse the existing
+`PaymentProvider` abstraction from Phase 2 (never fake a successful
+charge) for non-zero orders. Inspect the exact current schema/state at
+the start of the phase before building. Do not restart or re-architect
+what exists above — extend it.

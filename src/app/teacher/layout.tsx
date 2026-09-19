@@ -13,6 +13,8 @@ const NAV_ITEMS = [
   { href: "/teacher/achievements", label: "الإنجازات" },
   { href: "/teacher/career-fields", label: "المجالات المهنية" },
   { href: "/teacher/certificates", label: "الشهادات" },
+  { href: "/teacher/profile", label: "ملفي الشخصي" },
+  { href: "/teacher/support", label: "الدعم الفني" },
   { href: "/teacher/banners", label: "إعلانات الصفحة الرئيسية" },
   { href: "/teacher/categories", label: "الأقسام" },
   { href: "/teacher/courses", label: "الكورسات" },

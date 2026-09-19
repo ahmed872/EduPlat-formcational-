@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/student/career-guidance", label: "التوجيه المهني" },
   { href: "/student/certificates", label: "شهاداتي" },
   { href: "/student/referral", label: "دعوة الأصدقاء" },
+  { href: "/student/support", label: "الدعم الفني" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];
