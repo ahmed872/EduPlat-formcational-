@@ -10,6 +10,7 @@ import {
 } from "@/lib/business/video-access";
 import { getActivePaymentProvider } from "@/lib/payments/provider";
 import { notify } from "@/lib/business/notifications";
+import { applyPendingReferralReward } from "@/lib/business/referral";
 
 async function notifySubscriptionActivated(prisma: PrismaClient, studentId: string, planName: string) {
   const student = await prisma.studentProfile.findUnique({
@@ -116,6 +117,7 @@ export async function startSubscriptionCheckout(
   if (intent.status === "SUCCEEDED") {
     await grantEntitlementsForSubscription(prisma, subscription.id);
     await notifySubscriptionActivated(prisma, params.studentId, plan.name);
+    await applyPendingReferralReward(prisma, params.studentId);
   }
 
   return { subscription, payment, instructions: intent.instructions };
@@ -175,6 +177,7 @@ export async function confirmPayment(
     subscriptionWithPlan.studentId,
     subscriptionWithPlan.plan.name,
   );
+  await applyPendingReferralReward(prisma, subscriptionWithPlan.studentId);
 
   return updated;
 }

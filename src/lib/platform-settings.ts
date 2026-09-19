@@ -14,6 +14,7 @@ export const PLATFORM_SETTING_KEYS = {
   ACADEMIC_YEAR_END: "academic_year_end", // ISO date string; subscriptions expire here by default
   DAILY_STREAK_MIN_ACTIVE_MINUTES: "daily_streak_min_active_minutes",
   SHORT_MAX_DURATION_SECONDS: "short_max_duration_seconds",
+  REFERRAL_REWARD_DAYS: "referral_reward_days",
 } as const;
 
 export type PlatformSettingKey =
@@ -27,6 +28,7 @@ const DEFAULTS: Record<PlatformSettingKey, unknown> = {
   [PLATFORM_SETTING_KEYS.ACADEMIC_YEAR_END]: `${new Date().getFullYear() + 1}-07-31`,
   [PLATFORM_SETTING_KEYS.DAILY_STREAK_MIN_ACTIVE_MINUTES]: 15,
   [PLATFORM_SETTING_KEYS.SHORT_MAX_DURATION_SECONDS]: 300,
+  [PLATFORM_SETTING_KEYS.REFERRAL_REWARD_DAYS]: 7,
 };
 
 export async function getPlatformSetting<T = unknown>(

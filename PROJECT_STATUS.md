@@ -1,12 +1,12 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 15 session)
+Last updated: 2026-09-19 (Phase 16 session)
 
 ## Current phase
 
-Phase 15 (Career Guidance) is complete, on top of Phase 14
-(Achievements), Phase 13 (Leaderboards & Hall of Fame), Phase 12 (Games),
-Phase 11 (Promo & Marketing),
+Phase 16 (Certificates & Referral) is complete, on top of Phase 15
+(Career Guidance), Phase 14 (Achievements), Phase 13 (Leaderboards &
+Hall of Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -692,11 +692,70 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   matching field suggested — the unmatched field never appears in the
   result box but is still visible when browsing the full field list.
 
+### Certificates & referral (Phase 16 — new this session)
+- **Certificates** (`src/lib/business/certificates.ts`):
+  `issueCertificateIfEligible()` is idempotent and checks a real,
+  strict condition — every one of a course's currently published lessons
+  has a COMPLETED `LessonProgress` row for that student (the same
+  definition `analytics.ts`'s `completionPercentage` already uses) —
+  before creating a `Certificate` row with a real, randomly generated
+  `certificateCode`. Hooked into `quiz.ts`'s
+  `markLessonCompletedAndUnlockNext()`, so a certificate appears the
+  moment the student's own course-completion bar would read 100%, never
+  before and never twice for the same course.
+  `/certificates/verify/[code]` is a genuinely public page (no login,
+  outside the `proxy.ts` role-gated prefixes, same pattern as Shorts)
+  that looks up a code and either shows the real student name + course
+  title + issue date, or an honest "not found" message for an unknown
+  code. `/student/certificates` lists a student's own certificates with
+  a link to their own public verification page;
+  `/teacher/certificates` is a read-only issued-certificates log.
+- **Referral rewards** (`src/lib/business/referral.ts`):
+  `createPendingReferralReward()` runs at registration when a valid
+  referral code is supplied (silently ignored if unknown or
+  self-referential — never blocks signup, same graceful-degradation
+  stance as an invalid promo code at checkout) and records an unapplied
+  `ReferralReward`. `applyPendingReferralReward()` — hooked into both
+  success paths in `subscription.ts` (`startSubscriptionCheckout`'s
+  zero-amount branch and `confirmPayment()`) — fires the moment the
+  **referred** student's first subscription genuinely succeeds (a real
+  signup-to-paying-customer conversion, not just an account creation,
+  which would be trivially fakeable at scale), extending the
+  **referrer's** most recent subscription's `expiresAt` by a configurable
+  number of days (`REFERRAL_REWARD_DAYS` platform setting, default 7).
+  `/student/referral` shows a student's own referral code and every
+  reward earned as a referrer (pending vs. applied).
+- **Deliberate design choice**: referral rewards extend real subscription
+  time rather than crediting `StudentProfile.points` — `points` already
+  has one specific, meaningful source (`games.ts`'s `submitGameScore()`)
+  that Phase 14's `GAME_POINTS` achievement metric reads; crediting
+  referral rewards to the same field would have let a student unlock a
+  "games" achievement without ever playing a game, a fake-completion
+  loophole the rest of the platform deliberately avoids.
+- **Honest, documented gap**: a referrer who has never subscribed at all
+  has no `Subscription` row to extend — the reward is left unapplied
+  (never fabricates an entitlement/subscription out of thin air) rather
+  than silently dropped, so it can still be retried on the referred
+  student's next successful payment if one occurs.
+- 17 new tests (`certificates.test.ts`, `referral.test.ts`): eligibility
+  on full completion, non-issuance on partial/zero-lesson courses,
+  idempotency, unpublished lessons ignored, code lookup (found/not
+  found), reward creation for valid/unknown/self-referral codes, reward
+  application extending the correct subscription, no application without
+  a referrer subscription, no double-application, expiry respected.
+  160/160 tests passing overall. Verified end-to-end in a real browser
+  (Playwright, transient dev dependency, removed after the run): a
+  teacher builds a full course→lesson→question-bank→lesson-quiz chain, a
+  student passes the quiz and immediately sees a real certificate with a
+  working public verification link (and a bogus code is honestly
+  rejected); separately, a referrer student subscribes for free via a
+  promo code, a second student registers with the referrer's code and
+  also subscribes, and the referrer's account shows the reward applied.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI, certificates + public
-verification page, referral system UI, support ticket UI, store/checkout,
+UI, support ticket UI, store/checkout,
 real payment gateway integration, audit-log UI, rate limiting,
 concurrent-session detection, HLS/DRM, search.
 
@@ -814,11 +873,24 @@ concurrent-session detection, HLS/DRM, search.
 26. **No teacher-facing edit for career fields** — `/teacher/career-fields`
     supports create + delete only, same category of gap as achievements
     above.
+27. **A referrer with no subscription at all never receives a pending
+    referral reward** — see the "Honest, documented gap" note in the
+    Certificates & Referral section above; the reward stays pending
+    rather than fabricating an entitlement.
+28. **No certificate PDF/image generation** — `/certificates/verify/[code]`
+    is a real, permanent, publicly verifiable HTML record, but there is
+    no downloadable certificate document (same category of gap as
+    Phase 10's report PDF export — no rendering pipeline available here).
+29. **Referral fraud prevention is minimal** — a student could register
+    many throwaway accounts with a referral code and have each one
+    subscribe via a free promo code to farm rewards; there is no
+    rate-limiting or identity verification here, the same honest
+    limitation already noted for parent-link requests in Phase 9.
 
 ## Test status
 
 ```
-npx vitest run       # 143/143 passing (21 files)
+npx vitest run       # 160/160 passing (23 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -847,12 +919,10 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 16 — Certificates & Referral: `Certificate` and `ReferralReward`
-(schema exists — check `Certificate`'s exact fields, e.g. any
-verification-code/public-URL field, and how `StudentProfile.referralCode`
-from Foundation is meant to connect to `ReferralReward` before building).
-Build real certificate issuance (tied to genuine course/exam completion,
-not a rubber stamp) with a public verification page, and a referral
-reward flow off the existing `referralCode`. Inspect the exact current
-schema/state at the start of the phase before building. Do not restart or
-re-architect what exists above — extend it.
+Phase 17 — Teacher Profile & Support: `SupportTicket`,
+`SupportTicketAttachment`, `SupportTicketReply` exist in the schema
+(unused) — check for any teacher-profile-specific model too. Build a
+support ticket system (student/parent opens a ticket, teacher/admin
+replies) and a teacher-facing public/semi-public profile page. Inspect
+the exact current schema/state at the start of the phase before
+building. Do not restart or re-architect what exists above — extend it.

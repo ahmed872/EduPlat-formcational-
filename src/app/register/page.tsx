@@ -9,6 +9,7 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [referralCode, setReferralCode] = useState("");
   const [role, setRole] = useState<"STUDENT" | "PARENT">("STUDENT");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -21,7 +22,13 @@ export default function RegisterPage() {
     const response = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password, role }),
+      body: JSON.stringify({
+        name,
+        email,
+        password,
+        role,
+        referralCode: referralCode.trim() || undefined,
+      }),
     });
 
     if (!response.ok) {
@@ -92,6 +99,17 @@ export default function RegisterPage() {
             className="rounded-md border border-gray-300 px-3 py-2"
           />
         </label>
+        {role === "STUDENT" && (
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">كود الإحالة (اختياري)</span>
+            <input
+              value={referralCode}
+              onChange={(event) => setReferralCode(event.target.value)}
+              placeholder="إن كان لديك كود من صديق"
+              className="rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+        )}
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button
           type="submit"

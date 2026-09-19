@@ -2,6 +2,7 @@ import type { PrismaClient, QuestionType } from "@prisma/client";
 import { notify } from "@/lib/business/notifications";
 import { allRequiredExperimentsCompleted } from "@/lib/business/experiment";
 import { evaluateAchievementsForStudent } from "@/lib/business/achievements";
+import { issueCertificateIfEligible } from "@/lib/business/certificates";
 
 function isAutoGradable(type: QuestionType) {
   return type !== "ESSAY" && type !== "SHORT_ANSWER";
@@ -311,6 +312,15 @@ async function markLessonCompletedAndUnlockNext(
       completedAt: new Date(),
     },
     update: { status: "COMPLETED", quizPassed: true, completedAt: new Date() },
+  });
+
+  const completedLesson = await prisma.lesson.findUniqueOrThrow({
+    where: { id: params.lessonId },
+    select: { courseId: true },
+  });
+  await issueCertificateIfEligible(prisma, {
+    studentId: params.studentId,
+    courseId: completedLesson.courseId,
   });
 
   const nextLessons = await prisma.lesson.findMany({
