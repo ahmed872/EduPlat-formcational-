@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/student/games", label: "الألعاب" },
   { href: "/student/leaderboards", label: "لوحة الصدارة" },
   { href: "/student/hall-of-fame", label: "قاعة الشرف" },
+  { href: "/student/achievements", label: "إنجازاتي" },
   { href: "/student/subscribe", label: "الاشتراك" },
   { href: "/student/payments", label: "سجل المدفوعات" },
 ];

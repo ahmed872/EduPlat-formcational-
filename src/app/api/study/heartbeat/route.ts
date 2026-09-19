@@ -2,8 +2,10 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole, toErrorResponse } from "@/lib/rbac";
-import { recordHeartbeat } from "@/lib/business/study-time";
+import { evaluateStreakForDay, recordHeartbeat } from "@/lib/business/study-time";
 import { notifyIfTargetReached } from "@/lib/business/notifications";
+import { evaluateAchievementsForStudent } from "@/lib/business/achievements";
+import { getPlatformSetting, PLATFORM_SETTING_KEYS } from "@/lib/platform-settings";
 
 const bodySchema = z.object({
   type: z.enum(["VIDEO", "EXERCISE"]),
@@ -25,7 +27,7 @@ export async function POST(request: Request) {
 
     if (result.creditedSeconds > 0) {
       const today = startOfDay(new Date());
-      const [dailyStat, target] = await Promise.all([
+      const [dailyStat, target, minQualifyingMinutes] = await Promise.all([
         prisma.dailyStudyStat.findUnique({
           where: { studentId_date: { studentId, date: today } },
         }),
@@ -33,6 +35,7 @@ export async function POST(request: Request) {
           where: { OR: [{ studentId }, { studentId: null }], period: "DAILY", active: true },
           orderBy: { studentId: "desc" }, // student-specific (non-null) sorts first
         }),
+        getPlatformSetting<number>(PLATFORM_SETTING_KEYS.DAILY_STREAK_MIN_ACTIVE_MINUTES),
       ]);
       if (target && dailyStat) {
         await notifyIfTargetReached(prisma, {
@@ -44,6 +47,8 @@ export async function POST(request: Request) {
           periodKey: today.toISOString().slice(0, 10),
         });
       }
+      await evaluateStreakForDay(prisma, { studentId, day: today, minQualifyingMinutes });
+      await evaluateAchievementsForStudent(prisma, studentId);
     }
 
     return Response.json(result);

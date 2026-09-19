@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { evaluateAchievementsForStudent } from "@/lib/business/achievements";
 
 export type GameQuestion = {
   prompt: string;
@@ -111,6 +112,8 @@ export async function submitGameScore(
       data: { points: { increment: params.score } },
     }),
   ]);
+
+  await evaluateAchievementsForStudent(prisma, params.studentId);
 
   return updated;
 }

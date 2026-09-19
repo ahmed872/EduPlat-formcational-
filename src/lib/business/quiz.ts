@@ -1,6 +1,7 @@
 import type { PrismaClient, QuestionType } from "@prisma/client";
 import { notify } from "@/lib/business/notifications";
 import { allRequiredExperimentsCompleted } from "@/lib/business/experiment";
+import { evaluateAchievementsForStudent } from "@/lib/business/achievements";
 
 function isAutoGradable(type: QuestionType) {
   return type !== "ESSAY" && type !== "SHORT_ANSWER";
@@ -276,6 +277,10 @@ export async function finalizeAttemptIfFullyGraded(
       passed,
     },
   });
+
+  if (passed) {
+    await evaluateAchievementsForStudent(prisma, attempt.studentId);
+  }
 
   if (passed && attempt.quiz.lessonId) {
     await markLessonCompletedAndUnlockNext(prisma, {

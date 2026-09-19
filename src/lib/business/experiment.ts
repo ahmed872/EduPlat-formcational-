@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { evaluateAchievementsForStudent } from "@/lib/business/achievements";
 
 export async function getExperimentsWithStatus(
   prisma: PrismaClient,
@@ -59,13 +60,17 @@ export async function completeExperimentAttempt(
     throw new Error("لا يمكنك إنهاء تجربة طالب آخر");
   }
 
-  return prisma.experimentAttempt.update({
+  const updated = await prisma.experimentAttempt.update({
     where: { id: params.attemptId },
     data: {
       completedAt: new Date(),
       resultJson: (params.resultJson ?? null) as never,
     },
   });
+
+  await evaluateAchievementsForStudent(prisma, params.studentId);
+
+  return updated;
 }
 
 /**

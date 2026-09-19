@@ -1,11 +1,11 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 13 session)
+Last updated: 2026-09-19 (Phase 14 session)
 
 ## Current phase
 
-Phase 13 (Leaderboards & Hall of Fame) is complete, on top of Phase 12
-(Games), Phase 11 (Promo & Marketing),
+Phase 14 (Achievements) is complete, on top of Phase 13 (Leaderboards &
+Hall of Fame), Phase 12 (Games), Phase 11 (Promo & Marketing),
 Phase 10 (Reports), Phase 9 (Parent System), Phase 8 (Student Analytics),
 Phase 7 (Interactive Experiments), Phase 6 (Question Bank & Exams), Phase
 5 (Student Learning Features), Phase 4 (Shorts & Timestamp System), Phase
@@ -575,10 +575,72 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   session then sees it publicly — confirming the approval gate is
   enforced server-side, not just hidden in one UI state.
 
+### Achievements (Phase 14 — new this session)
+- **Business logic** (`src/lib/business/achievements.ts`):
+  `computeStudentMetrics()` computes five real, current metrics for a
+  student in one batched query set — `STREAK_DAYS` (from
+  `Streak.longestStreak`, not `currentStreak`, so an achievement earned by
+  once reaching a streak length is never revoked by a later reset),
+  `LESSONS_COMPLETED`, `QUIZZES_PASSED`, `EXPERIMENTS_COMPLETED`, and
+  `GAME_POINTS` (from `StudentProfile.points`). `evaluateAchievementsForStudent()`
+  awards every non-custom `Achievement` whose `criteriaJson`
+  (`{ metric, threshold }`) the student's real metrics now satisfy and
+  that they don't already hold, notifying once per unlock; malformed/
+  unrecognized criteria are skipped rather than ever silently unlocking.
+  `awardCustomAchievement()` is the only way an `isCustom` achievement
+  (no automatic condition — for recognition no metric can honestly
+  capture) is ever granted, always by an explicit teacher action, blocked
+  from double-awarding by the `(studentId, achievementId)` unique
+  constraint. `getStudentAchievements()` returns every achievement with
+  its earned status and, for non-custom ones, live progress
+  (`current`/`threshold`) toward unlocking.
+- **Opportunistic evaluation, no scheduler** (same pattern as
+  `syncExpiredSubscriptions()`/reports/leaderboards): `evaluateAchievementsForStudent()`
+  is called right after every action that can move one of the five
+  metrics — a quiz pass (`quiz.ts`'s `finalizeAttemptIfFullyGraded`), an
+  experiment completion (`experiment.ts`'s `completeExperimentAttempt`), a
+  game score submission (`games.ts`'s `submitGameScore`), and a study-time
+  heartbeat that credits time (`/api/study/heartbeat`).
+- **Real, pre-existing bug found and fixed before commit**:
+  `evaluateStreakForDay()` (streak computation logic, unit-tested since
+  Foundation) was never called from any route — `Streak.currentStreak`/
+  `longestStreak` were dead columns that never actually updated from real
+  activity, silently showing "0 يوم" on the student dashboard's streak
+  card regardless of genuine daily study habits, and would have made the
+  new `STREAK_DAYS` achievement metric permanently unreachable. Fixed by
+  wiring `evaluateStreakForDay()` into `/api/study/heartbeat/route.ts`
+  (using the existing `DAILY_STREAK_MIN_ACTIVE_MINUTES` platform setting),
+  right after a heartbeat credits real time for the day.
+- **Teacher page** (`/teacher/achievements`): create an achievement
+  (code, title, description, icon) as either automatic (pick one of the
+  five metrics + a threshold) or custom (`isCustom`, no automatic
+  condition); see which real students already hold each achievement;
+  award a custom achievement to a specific student by name — attempting
+  to award a non-custom achievement is rejected server-side, not just
+  hidden in the UI.
+- **Student page** (`/student/achievements`): earned achievements with
+  their unlock date, and locked ones with a real progress bar
+  (current metric value vs. threshold) for automatic achievements, or an
+  honest "يُمنح من المعلم" note (no fake progress bar) for locked custom
+  ones.
+- 13 new tests (`achievements.test.ts`): metric computation (including the
+  longestStreak-not-currentStreak choice), awarding on real threshold
+  crossing, no double-award/double-notify, never auto-awarding a custom
+  achievement however high the metrics are, malformed criteria never
+  unlocking, manual-award rejection for non-custom achievements, and
+  duplicate-award rejection. 135/135 tests passing overall. Verified
+  end-to-end in a real browser (Playwright, transient dev dependency,
+  removed after the run): a teacher creates an automatic
+  `GAME_POINTS ≥ 1` achievement and a custom achievement, a student plays
+  a game and immediately sees the automatic achievement unlocked on their
+  own page while the custom one still shows locked with no progress bar,
+  the teacher then awards the custom achievement by name, and the student
+  sees it as earned too.
+
 ## Not started (by priority order, all schema-ready)
 
 Email/push notification delivery, announcements
-UI, achievements engine,
+UI,
 career guidance content + exploration quiz, certificates + public
 verification page, referral system UI, support ticket UI, store/checkout,
 real payment gateway integration, audit-log UI, rate limiting,
@@ -672,11 +734,22 @@ concurrent-session detection, HLS/DRM, search.
     scheduled** — same "no scheduler in this environment" honesty note as
     `syncExpiredSubscriptions()` and Phase 10's reports; a real deployment
     would run `generateHallOfFameCandidates()` from a monthly cron job.
+22. ~~`evaluateStreakForDay()` was never called from any route~~ — **fixed
+    in Phase 14**: wired into `/api/study/heartbeat/route.ts`, so
+    `Streak.currentStreak`/`longestStreak` (shown on the student dashboard
+    and used by the new `STREAK_DAYS` achievement metric) now actually
+    update from real daily activity against the
+    `DAILY_STREAK_MIN_ACTIVE_MINUTES` platform setting.
+23. **No teacher-facing edit/delete for achievements.** `/teacher/achievements`
+    supports create + award-to-student only — there is no update or
+    delete form, matching the "never delete a feature/data silently"
+    stance and avoiding a foreign-key conflict with existing
+    `StudentAchievement` rows.
 
 ## Test status
 
 ```
-npx vitest run       # 122/122 passing (19 files)
+npx vitest run       # 135/135 passing (20 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -705,10 +778,8 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 14 — Achievements: `Achievement` and `StudentAchievement` (schema
-exists, unused). Build real unlock-condition evaluation (e.g. tied to
-study streaks, quiz passes, experiment/game completion — whatever the
-existing `Achievement` model's fields actually support) plus
-student-/teacher-facing UI to view/award them. Inspect the exact current
+Phase 15 — Career Guidance: build the career guidance content model and
+an exploration quiz (schema/state not yet inspected — check what, if
+anything, already exists before designing). Inspect the exact current
 schema/state at the start of the phase before building. Do not restart or
 re-architect what exists above — extend it.
