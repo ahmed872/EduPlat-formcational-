@@ -6,6 +6,8 @@ import { auth, signOut } from "@/auth";
 const NAV_ITEMS = [
   { href: "/teacher", label: "لوحة التحكم" },
   { href: "/teacher/search", label: "البحث" },
+  { href: "/teacher/accounts", label: "إدارة الحسابات" },
+  { href: "/teacher/audit-log", label: "سجل التدقيق" },
   { href: "/teacher/analytics", label: "التحليلات" },
   { href: "/teacher/reports", label: "تقارير الطلاب" },
   { href: "/teacher/games", label: "الألعاب" },

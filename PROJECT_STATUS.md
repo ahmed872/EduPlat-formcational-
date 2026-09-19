@@ -1,10 +1,12 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 20 session)
+Last updated: 2026-09-19 (Phase 21 session)
 
 ## Current phase
 
-Phase 20 (Search) is complete, on top of Phase 19 (Notifications &
+Phase 21 (Advanced Security) is complete — this is the final phase of
+the originally-enumerated 21-phase plan. It builds on Phase 20 (Search),
+Phase 19 (Notifications &
 Announcements), Phase 18 (Store), Phase 17 (Teacher Profile &
 Support), Phase 16 (Certificates & Referral), Phase 15 (Career
 Guidance), Phase 14 (Achievements), Phase 13 (Leaderboards & Hall of
@@ -933,10 +935,78 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   steps, confirming this was a dev-server-restart race, not a defect in
   `login-form.tsx` or the NextAuth configuration.
 
+### Advanced security (Phase 21 — new this session)
+- **Real login rate limiting** (`src/lib/business/security.ts`): a new
+  `LoginAttempt` model (`prisma/schema.prisma`, migration
+  `20260919123819_login_attempt_and_rate_limit`) records every
+  credentials sign-in attempt (success or failure) with `email`,
+  `succeeded`, `createdAt`, indexed on `[email, createdAt]`.
+  `isRateLimited()` counts failed attempts for an exact
+  (case-insensitive) email within a rolling window and blocks further
+  attempts once a threshold is reached; both the threshold (default 5)
+  and the window (default 15 minutes) are configurable
+  `PlatformSetting` keys (`LOGIN_RATE_LIMIT_MAX_ATTEMPTS`,
+  `LOGIN_RATE_LIMIT_WINDOW_MINUTES`), not hardcoded. `src/auth.ts`'s
+  `authorize()` checks the rate limit first, safely computes
+  `validPassword` (guarding against a missing/already-blocked user
+  before calling `bcrypt.compare`), and records every attempt via
+  `recordLoginAttempt()` regardless of outcome — verified end-to-end in
+  a real browser: 5 consecutive wrong-password attempts each show the
+  generic Arabic error, and a 6th attempt with the **correct** password
+  still fails, proving real rate limiting rather than just a
+  wrong-password rejection.
+- **Real account blocking** (`blockUser()`/`unblockUser()`): the first-
+  ever real use of the pre-existing (Foundation-era, previously totally
+  unused) `User.status`/`blockedReason`/`blockedAt`/`blockedById`
+  fields, which `auth.ts`'s `authorize()` already silently enforced
+  (`if (user.status === "BLOCKED") return null`) but which no UI had
+  ever been able to set. `assertCanModerateUser()` rejects moderating a
+  `TEACHER_ADMIN` account through this path. Both actions write a real
+  `AuditLog` row (`BLOCK_USER`/`UNBLOCK_USER`) with the acting teacher
+  as actor. New teacher UI at `/teacher/accounts`: lists all
+  STUDENT/PARENT accounts with real status badges, a required-reason
+  block form, and an unblock button — verified end-to-end: a teacher
+  blocks a freshly-registered student with a reason, the student's next
+  login attempt immediately fails with the generic credentials error
+  (not a special "blocked" message, so blocking can't be used to probe
+  which emails are registered), the teacher unblocks them, and the
+  student can log in again.
+- **Audit log UI** (`getAuditLog()`, `/teacher/audit-log`): lists every
+  `AuditLog` entry newest-first (actor, action, entity, metadata,
+  timestamp) — the log itself already existed and was already written
+  to by `confirmPayment`/`rejectPayment`/`refundPayment`
+  (`subscription.ts`), but had no viewer anywhere until this phase;
+  `BLOCK_USER`/`UNBLOCK_USER` are new entries in the same log, so
+  payment moderation and account moderation now share one real,
+  append-only audit trail with no delete/edit path.
+- 10 new tests (`security.test.ts`): rate-limit threshold/window/case-
+  insensitivity behavior (including a rolling-window boundary test with
+  an explicit fixed clock), block/unblock field + audit-log
+  correctness, the `TEACHER_ADMIN`-moderation guard, and audit log
+  ordering. 220/220 tests passing overall.
+- **Honest scope limit — concurrent-session detection was not
+  implemented.** The session strategy is stateless JWT (confirmed via
+  `src/auth.ts`'s `session: { strategy: "jwt" }`); detecting or
+  limiting concurrent sessions for the same account would require
+  switching to database-backed sessions, a real architectural change
+  to how every request authenticates — not an extension of what
+  exists, so it was deliberately left out per the standing "extend,
+  don't restart" rule rather than faked with a partial/misleading
+  implementation.
+- **Environment note, not a code bug**: the first browser-based
+  verification run hit the same one-time `MissingCSRF` race documented
+  in Phase 20 — on the very first credentials action callback (the
+  auto-login immediately after registration) against a just-restarted
+  dev server (confirmed via `grep -c "MissingCSRF"` = 1 for the whole
+  log). The account itself was created successfully
+  (`POST /api/auth/register 201`), which is why the very next step
+  (the teacher finding and blocking that account) succeeded regardless.
+  A clean rerun against the now-warmed server passed all 10 steps with
+  zero errors.
+
 ## Not started (by priority order, all schema-ready)
 
-Real payment gateway integration, audit-log UI, rate limiting,
-concurrent-session detection, HLS/DRM.
+Real payment gateway integration, concurrent-session detection, HLS/DRM.
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -1109,7 +1179,7 @@ concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 210/210 passing (28 files)
+npx vitest run       # 220/220 passing (29 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1138,14 +1208,13 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-Phase 21 — Advanced Security (final phase of the original 21-phase
-plan): `AuditLog` exists in the schema and is already written to by a
-few flows (e.g. `confirmPayment`/`rejectPayment`/`refundPayment` in
-subscription.ts) but has no UI anywhere. This phase's scope, per the
-master spec, covers things like an audit-log viewer, rate limiting, and
-concurrent-session detection — none of which have dedicated schema
-support yet beyond `AuditLog` itself. Inspect the exact current
-schema/state (including every existing `AuditLog`-writing call site)
-at the start of the phase before building, and be honest about what
-genuinely needs new schema vs. what can be built from what exists. Do
-not restart or re-architect what exists above — extend it.
+All 21 phases of the originally-enumerated standing plan (Phase 2
+through Phase 21) are now complete, on top of the Phase-1 foundation.
+There is no further phase queued by the original spec. Any future work
+should come from a fresh, explicit request rather than an invented
+"Phase 22" — starting points, if asked for one, would most likely be:
+a real payment gateway integration (see "Known gaps" #1), concurrent-
+session detection (would require switching from JWT to database-backed
+sessions — see the Phase 21 section above), or HLS/DRM for video
+(see "Known gaps" #2), all of which are the honestly-documented
+remaining gaps rather than missing features.

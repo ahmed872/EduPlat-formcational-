@@ -1213,6 +1213,22 @@ model AuditLog {
   @@index([entityType, entityId])
 }
 
+/**
+ * Every credentials sign-in attempt, successful or not -- the record a
+ * real login rate limiter needs. Not tied to a User row (a failed
+ * attempt for an unknown email is still worth tracking against brute
+ * force) so this intentionally has no relation, just the email as
+ * typed.
+ */
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  succeeded Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+}
+
 // =========================================================================
 // PLATFORM SETTINGS (configurable business rules — never hardcoded)
 // =========================================================================

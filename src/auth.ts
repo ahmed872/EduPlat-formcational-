@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { authConfig } from "@/auth.config";
+import { isRateLimited, recordLoginAttempt } from "@/lib/business/security";
 
 const credentialsSchema = z.object({
   email: z.string().email(),
@@ -23,16 +24,28 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const parsed = credentialsSchema.safeParse(rawCredentials);
         if (!parsed.success) return null;
         const { email, password } = parsed.data;
+        const normalizedEmail = email.toLowerCase();
+
+        // Real brute-force throttling: too many recent failures for this
+        // exact email blocks further attempts for the configured window,
+        // regardless of whether this particular password is even correct.
+        if (await isRateLimited(prisma, normalizedEmail)) {
+          return null;
+        }
 
         const user = await prisma.user.findUnique({
-          where: { email: email.toLowerCase() },
+          where: { email: normalizedEmail },
           include: { studentProfile: true, parentProfile: true },
         });
-        if (!user) return null;
-        if (user.status === "BLOCKED") return null;
 
-        const validPassword = await bcrypt.compare(password, user.passwordHash);
-        if (!validPassword) return null;
+        const validPassword =
+          user && user.status !== "BLOCKED"
+            ? await bcrypt.compare(password, user.passwordHash)
+            : false;
+
+        await recordLoginAttempt(prisma, { email: normalizedEmail, succeeded: validPassword });
+
+        if (!user || user.status === "BLOCKED" || !validPassword) return null;
 
         return {
           id: user.id,
