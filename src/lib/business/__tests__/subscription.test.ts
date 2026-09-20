@@ -12,6 +12,7 @@ import {
   startSubscriptionCheckout,
   syncExpiredSubscriptions,
 } from "@/lib/business/subscription";
+import { createPendingReferralReward } from "@/lib/business/referral";
 import { PLATFORM_SETTING_KEYS, setPlatformSetting } from "@/lib/platform-settings";
 
 beforeEach(async () => {
@@ -116,6 +117,66 @@ describe("subscription checkout & payment states", () => {
     await expect(
       confirmPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id }),
     ).rejects.toThrow(/Cannot confirm/);
+  });
+
+  it("never double-confirms the same payment under concurrent confirm calls", async () => {
+    // Regression test for a real race: a plain read-then-write status check
+    // (even inside a $transaction) let two concurrent confirmPayment calls
+    // for the same payment both pass, both grant entitlements again, and
+    // both fire a second SUBSCRIPTION_ACTIVATED notification.
+    const student = await createStudent();
+    const { plan } = await setupPaidCourse();
+    const { payment } = await startSubscriptionCheckout(prisma, {
+      studentId: student.id,
+      planId: plan.id,
+    });
+    const teacher = await prisma.user.create({
+      data: { email: "race-confirm@test.local", name: "T", passwordHash: "x", role: "TEACHER_ADMIN" },
+    });
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () =>
+        confirmPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id }),
+      ),
+    );
+
+    const succeeded = results.filter((r) => r.status === "fulfilled");
+    expect(succeeded).toHaveLength(1);
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: student.userId, type: "SUBSCRIPTION_ACTIVATED" },
+    });
+    expect(notifications).toHaveLength(1);
+  });
+
+  it("a zero-amount checkout (free plan / 100%-off promo) never grants a referral reward", async () => {
+    // Regression test for a real bug: startSubscriptionCheckout's
+    // zero-amount success branch used to call applyPendingReferralReward
+    // unconditionally — but referral.ts's own stated intent is to reward a
+    // genuine signup-to-PAYING-customer conversion, not a $0 checkout with
+    // nothing actually collected. That let anyone farm referral rewards by
+    // registering with a code and immediately redeeming a 100%-off promo.
+    const referrer = await createStudent();
+    const referred = await createStudent();
+    await setPlatformSetting(PLATFORM_SETTING_KEYS.REFERRAL_REWARD_DAYS, 10);
+    await createPendingReferralReward(prisma, {
+      referralCode: referrer.referralCode,
+      referredStudentId: referred.id,
+    });
+
+    const { plan } = await setupPaidCourse();
+    await prisma.promoCode.create({ data: { code: "FREEFORFARMING", type: "FREE_100" } });
+
+    await startSubscriptionCheckout(prisma, {
+      studentId: referred.id,
+      planId: plan.id,
+      promoCode: "FREEFORFARMING",
+    });
+
+    const reward = await prisma.referralReward.findUniqueOrThrow({
+      where: { referredStudentId: referred.id },
+    });
+    expect(reward.appliedAt).toBeNull(); // still pending — never applied
   });
 
   it("a 100%-off promo code makes the subscription active immediately with no payment step", async () => {

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { searchForTeacher } from "@/lib/business/search";
 
@@ -16,6 +18,15 @@ export default async function TeacherSearchPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  // The teacher layout already gates this whole route tree — this check is
+  // defense-in-depth. It matters more here than on the student search page:
+  // teacher search surfaces DRAFT/unpublished content, so this route must
+  // never rely on a single point of protection.
+  const session = await auth();
+  if (!session?.user || session.user.role !== "TEACHER_ADMIN") {
+    redirect("/login");
+  }
+
   const { q } = await searchParams;
   const query = q ?? "";
   const results = query ? await searchForTeacher(prisma, query) : [];

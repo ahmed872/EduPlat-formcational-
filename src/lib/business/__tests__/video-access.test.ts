@@ -120,6 +120,45 @@ describe("checkVideoAccess", () => {
     ).rejects.toThrow();
   });
 
+  it("cannot bypass the view limit by opening many sessions before consuming any of them", async () => {
+    // Regression test for a real bug: the limit was only checked when a
+    // session is CREATED, never when it's actually CONSUMED — so opening
+    // several sessions up front (each created before any of them had
+    // consumed a view) let every single one flip to consumedView=true
+    // independently, exceeding viewLimit via ordinary API calls.
+    const student = await createStudent();
+    const course = await createCourse();
+    const lesson = await createLesson({ courseId: course.id });
+    const video = await createVideo({ lessonId: lesson.id, viewLimit: 3 });
+    await subscribeStudentToCourse(student.id, course.id);
+
+    const sessions = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        startWatchSession(prisma, { studentId: student.id, videoId: video.id }),
+      ),
+    );
+
+    for (const session of sessions) {
+      await updateWatchProgress(prisma, {
+        sessionId: session.id,
+        watchedSeconds: 600,
+        videoDurationSeconds: 600,
+      });
+    }
+
+    const consumedCount = await prisma.watchSession.count({
+      where: { studentId: student.id, videoId: video.id, consumedView: true },
+    });
+    expect(consumedCount).toBe(3);
+
+    const decision = await checkVideoAccess(prisma, {
+      studentId: student.id,
+      videoId: video.id,
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe("VIEW_LIMIT_REACHED");
+  });
+
   it("does not consume a view for a session that never crosses the threshold", async () => {
     const student = await createStudent();
     const course = await createCourse();

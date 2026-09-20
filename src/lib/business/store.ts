@@ -35,14 +35,22 @@ export async function placeOrder(
       if (product.status !== "PUBLISHED") {
         throw new Error(`المنتج "${product.title}" غير متاح حاليًا`);
       }
-      if (product.stock < item.quantity) {
-        throw new Error(`الكمية المتوفرة من "${product.title}" غير كافية`);
-      }
 
-      await tx.product.update({
-        where: { id: product.id },
+      // A plain read-then-write ("is stock >= quantity?" then "decrement")
+      // is not safe even inside a transaction under Postgres's default READ
+      // COMMITTED isolation — two concurrent orders for the last unit can
+      // both read stock=1, both pass the check, and both decrement,
+      // overselling. The `stock: { gte: quantity }` condition makes the
+      // check and the write a single atomic statement: only one concurrent
+      // request can match and decrement the last unit, the loser gets
+      // count=0 and is correctly told the item is unavailable.
+      const decremented = await tx.product.updateMany({
+        where: { id: product.id, stock: { gte: item.quantity } },
         data: { stock: { decrement: item.quantity } },
       });
+      if (decremented.count === 0) {
+        throw new Error(`الكمية المتوفرة من "${product.title}" غير كافية`);
+      }
 
       totalCents += product.priceCents * item.quantity;
       orderItemsData.push({

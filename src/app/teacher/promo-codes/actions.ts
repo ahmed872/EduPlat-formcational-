@@ -26,6 +26,19 @@ export async function createPromoCode(formData: FormData) {
   if (CONTENT_REQUIRED_TYPES.includes(type) && !courseId) {
     throw new Error("هذا النوع من الأكواد يتطلب اختيار كورس مرتبط");
   }
+  // A negative value flips the discount formula into a surcharge (applyDiscount
+  // would then INCREASE the price instead of discounting it), and a percent
+  // above 100 has no sensible meaning — clamp server-side rather than trusting
+  // the form's own number-input bounds.
+  if (value !== null && value < 0) {
+    throw new Error("قيمة الخصم يجب ألا تكون سالبة");
+  }
+  if (type === "PERCENT_DISCOUNT" && value !== null && value > 100) {
+    throw new Error("نسبة الخصم يجب ألا تتجاوز 100%");
+  }
+  if (usageLimit !== null && usageLimit <= 0) {
+    throw new Error("حد الاستخدام يجب أن يكون أكبر من صفر");
+  }
 
   await prisma.promoCode.create({
     data: {

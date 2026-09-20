@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import type { GameQuestion } from "@/lib/business/games";
 import type { GameType } from "@prisma/client";
+import { isForeignKeyConstraintError } from "@/lib/prisma-errors";
 
 export async function createGame(formData: FormData) {
   const session = await auth();
@@ -45,7 +46,19 @@ export async function deleteGame(gameId: string) {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
-  await prisma.game.delete({ where: { id: gameId } });
+  try {
+    await prisma.game.delete({ where: { id: gameId } });
+  } catch (error) {
+    // GameSession.gameId is ON DELETE RESTRICT — any game a student has
+    // ever played cannot be hard-deleted. A clean, actionable error beats
+    // letting Postgres's raw FK-violation crash the server action.
+    if (isForeignKeyConstraintError(error)) {
+      throw new Error(
+        "لا يمكن حذف هذه اللعبة لأن طلابًا قد لعبوها بالفعل — يمكنك إيقافها بدلاً من الحذف",
+      );
+    }
+    throw error;
+  }
 
   revalidatePath("/teacher/games");
 }

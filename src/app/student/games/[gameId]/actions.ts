@@ -15,16 +15,18 @@ export async function startPlay(gameId: string) {
   revalidatePath(`/student/games/${gameId}/play`);
 }
 
-export async function finishPlay(gameId: string, sessionId: string, score: number) {
+export async function finishPlay(gameId: string, sessionId: string, answers: number[]) {
   const session = await auth();
   requireRole(session, ["STUDENT"]);
 
-  await submitGameScore(prisma, {
+  const result = await submitGameScore(prisma, {
     sessionId,
     studentId: session.user.studentProfileId!,
-    score,
+    answers,
   });
 
   revalidatePath(`/student/games/${gameId}/play`);
   revalidatePath("/student/games");
+
+  return { score: result.score };
 }

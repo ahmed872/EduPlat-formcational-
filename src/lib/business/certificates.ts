@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { generateShortCode } from "@/lib/id";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 /**
  * A course is "complete" when every one of its currently published
@@ -46,13 +47,28 @@ export async function issueCertificateIfEligible(
   const eligible = await hasCompletedCourse(prisma, params);
   if (!eligible) return null;
 
-  return prisma.certificate.create({
-    data: {
-      studentId: params.studentId,
-      courseId: params.courseId,
-      certificateCode: `CERT-${generateShortCode(10)}`,
-    },
-  });
+  // The `existing` check above is a plain read — two concurrent completion
+  // triggers for the same student+course (e.g. two lessons finalizing at
+  // nearly the same time) could both pass it before either insert lands.
+  // The real backstop is the @@unique([studentId, courseId]) constraint on
+  // Certificate: whichever request loses the race gets a clean "already
+  // issued, fetch the real one" instead of a duplicate row or a raw crash.
+  try {
+    return await prisma.certificate.create({
+      data: {
+        studentId: params.studentId,
+        courseId: params.courseId,
+        certificateCode: `CERT-${generateShortCode(10)}`,
+      },
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return prisma.certificate.findFirstOrThrow({
+        where: { studentId: params.studentId, courseId: params.courseId },
+      });
+    }
+    throw error;
+  }
 }
 
 export async function getCertificateByCode(prisma: PrismaClient, code: string) {

@@ -5,6 +5,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import type { QuestionDifficulty, QuestionType } from "@prisma/client";
+import { isForeignKeyConstraintError } from "@/lib/prisma-errors";
 
 const MANUALLY_GRADED_TYPES: QuestionType[] = ["SHORT_ANSWER", "ESSAY"];
 
@@ -87,7 +88,20 @@ export async function deleteQuestion(bankId: string, questionId: string) {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
-  await prisma.question.delete({ where: { id: questionId } });
+  try {
+    await prisma.question.delete({ where: { id: questionId } });
+  } catch (error) {
+    // QuizQuestion.questionId and QuizAnswer.questionId are ON DELETE
+    // RESTRICT — a question that has ever appeared on a quiz or been
+    // answered cannot be hard-deleted. A clean, actionable error beats
+    // letting Postgres's raw FK-violation crash the server action.
+    if (isForeignKeyConstraintError(error)) {
+      throw new Error(
+        "لا يمكن حذف هذا السؤال لأنه مستخدم في امتحان أو تمت الإجابة عليه بالفعل",
+      );
+    }
+    throw error;
+  }
 
   revalidatePath(`/teacher/question-bank/${bankId}`);
 }

@@ -13,6 +13,33 @@ const credentialsSchema = z.object({
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  callbacks: {
+    ...authConfig.callbacks,
+    // Re-verifies the account's live status on every session read (every
+    // `auth()` call from a server component/action/route — this instance,
+    // not the edge-safe one in auth.config.ts used by proxy.ts). Without
+    // this, blocking a user only ever affected NEW sign-ins: an already-
+    // issued JWT for a student blocked mid-session kept passing every
+    // requireRole()/requireSession() check until the token naturally
+    // expired, contradicting the account-management UI's own claim that a
+    // block "يمنعه فعليًا من تسجيل الدخول فورًا" (takes effect immediately).
+    // Setting session.user to null makes every existing check that already
+    // treats `!session?.user` as unauthenticated do the right thing with no
+    // other code path needing to change.
+    async session(params) {
+      const session = await authConfig.callbacks!.session!(params);
+      if (!session.user?.id) return session;
+
+      const user = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { status: true },
+      });
+      if (!user || user.status === "BLOCKED") {
+        return { ...session, user: null as unknown as typeof session.user };
+      }
+      return session;
+    },
+  },
   providers: [
     Credentials({
       name: "credentials",

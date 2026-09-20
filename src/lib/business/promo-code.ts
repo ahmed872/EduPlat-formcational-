@@ -34,6 +34,14 @@ export async function validatePromoCode(
 /**
  * Validates and redeems atomically so two concurrent redemptions can never
  * both slip through a usage-limit-reached code.
+ *
+ * The usage-limit check+increment is itself a single conditional UPDATE
+ * (`WHERE usedCount < usageLimit`), not a read-then-write — under Postgres's
+ * default READ COMMITTED isolation, a plain check followed by a separate
+ * increment (even inside a transaction) lets two concurrent redemptions
+ * near the cap both read a stale usedCount and both pass, pushing usedCount
+ * past usageLimit. The conditional UPDATE makes the check and the write
+ * atomic: only requests that still see room under the cap can succeed.
  */
 export async function redeemPromoCode(
   prisma: PrismaClient,
@@ -46,20 +54,29 @@ export async function redeemPromoCode(
     if (promo.expiresAt && promo.expiresAt.getTime() < Date.now()) {
       throw new Error("Promo code has expired");
     }
-    if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
-      throw new Error("Promo code usage limit reached");
+
+    if (promo.usageLimit !== null) {
+      const claimed = await tx.promoCode.updateMany({
+        where: { id: promo.id, usedCount: { lt: promo.usageLimit } },
+        data: { usedCount: { increment: 1 } },
+      });
+      if (claimed.count === 0) {
+        throw new Error("Promo code usage limit reached");
+      }
+    } else {
+      await tx.promoCode.update({
+        where: { id: promo.id },
+        data: { usedCount: { increment: 1 } },
+      });
     }
 
-    const redemption = await tx.promoRedemption.create({
+    // @@unique([promoId, studentId]) on PromoRedemption is the backstop
+    // against the SAME student redeeming twice concurrently — a violation
+    // here throws and rolls back the usedCount increment above too, since
+    // both are in the same transaction.
+    return tx.promoRedemption.create({
       data: { promoId: promo.id, studentId: params.studentId },
     });
-
-    await tx.promoCode.update({
-      where: { id: promo.id },
-      data: { usedCount: { increment: 1 } },
-    });
-
-    return redemption;
   });
 }
 

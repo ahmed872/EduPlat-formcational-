@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { GameQuestion } from "@/lib/business/games";
+import type { PublicGameQuestion } from "@/lib/business/games";
 import { finishPlay } from "./actions";
 
 export function GameRunner({
@@ -14,15 +14,19 @@ export function GameRunner({
 }: {
   gameId: string;
   sessionId: string;
-  questions: GameQuestion[];
+  questions: PublicGameQuestion[];
   durationMinutes: number;
   startedAt: string;
 }) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
-  const [correctCount, setCorrectCount] = useState(0);
   const [finished, setFinished] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [finalScore, setFinalScore] = useState<number | null>(null);
+  // The correct answer key is never sent to this component — the server
+  // grades `answers` (the student's own choice per question) against the
+  // real key and returns/derives the actual score itself.
+  const answersRef = useRef<number[]>([]);
 
   const endsAtMs = useMemo(
     () => new Date(startedAt).getTime() + durationMinutes * 60_000,
@@ -32,11 +36,12 @@ export function GameRunner({
     Math.max(0, Math.round((endsAtMs - Date.now()) / 1000)),
   );
 
-  async function finish(finalScore: number) {
+  async function finish() {
     if (finished) return;
     setFinished(true);
     setSubmitting(true);
-    await finishPlay(gameId, sessionId, finalScore);
+    const result = await finishPlay(gameId, sessionId, answersRef.current);
+    setFinalScore(result.score);
     setSubmitting(false);
     router.refresh();
   }
@@ -48,18 +53,20 @@ export function GameRunner({
       setRemainingSeconds(remaining);
       if (remaining <= 0) {
         clearInterval(interval);
-        finish(correctCount);
+        finish();
       }
     }, 500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endsAtMs, finished, correctCount]);
+  }, [endsAtMs, finished]);
 
   if (finished) {
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-4 text-center">
         <p className="text-lg font-semibold">
-          {submitting ? "جارٍ الحفظ..." : `انتهت اللعبة! نتيجتك: ${correctCount}`}
+          {submitting || finalScore === null
+            ? "جارٍ الحفظ..."
+            : `انتهت اللعبة! نتيجتك: ${finalScore}`}
         </p>
       </div>
     );
@@ -76,12 +83,10 @@ export function GameRunner({
   const question = questions[index % questions.length];
 
   function handleAnswer(choiceIndex: number) {
-    const isCorrect = choiceIndex === question.correctIndex;
-    const nextCorrect = isCorrect ? correctCount + 1 : correctCount;
-    setCorrectCount(nextCorrect);
+    answersRef.current[index] = choiceIndex;
 
     if (index + 1 >= questions.length) {
-      finish(nextCorrect);
+      finish();
     } else {
       setIndex(index + 1);
     }
@@ -115,7 +120,6 @@ export function GameRunner({
           ))}
         </div>
       </div>
-      <p className="text-sm text-gray-500">النقاط الحالية: {correctCount}</p>
     </div>
   );
 }

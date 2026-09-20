@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { searchForStudent } from "@/lib/business/search";
 
@@ -15,6 +17,14 @@ export default async function StudentSearchPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  // The student layout already gates this whole route tree — this check is
+  // defense-in-depth, kept consistent with every other protected page in
+  // the app, rather than relying on a single point of protection.
+  const session = await auth();
+  if (!session?.user || session.user.role !== "STUDENT") {
+    redirect("/login");
+  }
+
   const { q } = await searchParams;
   const query = q ?? "";
   const results = query ? await searchForStudent(prisma, query) : [];

@@ -66,16 +66,26 @@ export async function applyPendingReferralReward(
   const extendedExpiry = new Date(referrerSubscription.expiresAt);
   extendedExpiry.setDate(extendedExpiry.getDate() + pending.rewardValue);
 
-  const [updatedReward] = await prisma.$transaction([
-    prisma.referralReward.update({
-      where: { id: pending.id },
+  const updatedReward = await prisma.$transaction(async (tx) => {
+    // The `pending.appliedAt` check above is a plain read — two concurrent
+    // calls for the same referred student (e.g. two of their subscriptions
+    // becoming active around the same time) could both pass it before
+    // either write lands, extending the referrer's subscription twice for
+    // one conversion. This conditional update (`WHERE appliedAt IS NULL`)
+    // makes the check and the write atomic.
+    const claimed = await tx.referralReward.updateMany({
+      where: { id: pending.id, appliedAt: null },
       data: { appliedAt: new Date() },
-    }),
-    prisma.subscription.update({
+    });
+    if (claimed.count === 0) return null;
+
+    await tx.subscription.update({
       where: { id: referrerSubscription.id },
       data: { expiresAt: extendedExpiry, status: "ACTIVE" },
-    }),
-  ]);
+    });
+    return tx.referralReward.findUniqueOrThrow({ where: { id: pending.id } });
+  });
+  if (!updatedReward) return null;
 
   const referrer = await prisma.studentProfile.findUnique({
     where: { id: pending.referrerStudentId },

@@ -8,13 +8,15 @@ beforeEach(async () => {
   await resetDatabase();
 });
 
-async function createMiniGame(overrides: { active?: boolean } = {}) {
+async function createMiniGame(
+  overrides: { active?: boolean; questions?: unknown[] } = {},
+) {
   return prisma.game.create({
     data: {
       type: "MINI",
       name: "لعبة سريعة",
       active: overrides.active ?? true,
-      config: { questions: [] },
+      config: { questions: overrides.questions ?? [] } as never,
     },
   });
 }
@@ -104,45 +106,83 @@ describe("startGameSession", () => {
 });
 
 describe("submitGameScore", () => {
-  it("records the final score and credits it to the student's points", async () => {
+  const questions = [
+    { prompt: "1+1?", choices: ["1", "2", "3"], correctIndex: 1 },
+    { prompt: "2+2?", choices: ["3", "4", "5"], correctIndex: 1 },
+    { prompt: "3+3?", choices: ["5", "6", "7"], correctIndex: 1 },
+  ];
+
+  it("recomputes the score from the student's answers against the real answer key, and credits it to points", async () => {
     const student = await createStudent();
-    const game = await createMiniGame();
+    const game = await createMiniGame({ questions });
     const session = await startGameSession(prisma, { gameId: game.id, studentId: student.id });
 
+    // 2 correct (index 0 and 1), 1 wrong (index 2) — score must be 2, not
+    // whatever a caller might otherwise expect to freely dictate.
     const updated = await submitGameScore(prisma, {
       sessionId: session.id,
       studentId: student.id,
-      score: 40,
+      answers: [1, 1, 0],
     });
 
-    expect(updated.score).toBe(40);
+    expect(updated.score).toBe(2);
     expect(updated.endedAt).not.toBeNull();
 
     const refreshedStudent = await prisma.studentProfile.findUniqueOrThrow({
       where: { id: student.id },
     });
-    expect(refreshedStudent.points).toBe(40);
+    expect(refreshedStudent.points).toBe(2);
+  });
+
+  it("never trusts a client-supplied score — an arbitrarily large/forged answers array cannot exceed the real question count", async () => {
+    // Regression test for a real bug: the score used to be taken directly
+    // from the client with no validation, letting a single forged request
+    // credit unbounded points that fed leaderboards/achievements. Even a
+    // maximally "generous" (all-correct) answers array can never award more
+    // points than there are real questions in the game.
+    const student = await createStudent();
+    const game = await createMiniGame({ questions });
+    const session = await startGameSession(prisma, { gameId: game.id, studentId: student.id });
+
+    const updated = await submitGameScore(prisma, {
+      sessionId: session.id,
+      studentId: student.id,
+      // Ridiculous oversized/forged answers array — extra entries beyond
+      // the real question count must be ignored, and correct guesses for
+      // indices that don't exist can't manufacture extra points.
+      answers: [1, 1, 1, 999, 999, 999, 999, 999, 999, 999],
+    });
+
+    expect(updated.score).toBe(3); // all 3 real questions answered correctly, nothing more
   });
 
   it("rejects submitting a score for another student's session", async () => {
     const student = await createStudent();
     const otherStudent = await createStudent();
-    const game = await createMiniGame();
+    const game = await createMiniGame({ questions });
     const session = await startGameSession(prisma, { gameId: game.id, studentId: student.id });
 
     await expect(
-      submitGameScore(prisma, { sessionId: session.id, studentId: otherStudent.id, score: 10 }),
+      submitGameScore(prisma, {
+        sessionId: session.id,
+        studentId: otherStudent.id,
+        answers: [1, 1, 1],
+      }),
     ).rejects.toThrow(/لا يمكنك/);
   });
 
   it("rejects submitting a score twice for the same session", async () => {
     const student = await createStudent();
-    const game = await createMiniGame();
+    const game = await createMiniGame({ questions });
     const session = await startGameSession(prisma, { gameId: game.id, studentId: student.id });
 
-    await submitGameScore(prisma, { sessionId: session.id, studentId: student.id, score: 10 });
+    await submitGameScore(prisma, { sessionId: session.id, studentId: student.id, answers: [1] });
     await expect(
-      submitGameScore(prisma, { sessionId: session.id, studentId: student.id, score: 20 }),
+      submitGameScore(prisma, {
+        sessionId: session.id,
+        studentId: student.id,
+        answers: [1, 1, 1],
+      }),
     ).rejects.toThrow(/بالفعل/);
   });
 });

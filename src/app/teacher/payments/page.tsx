@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { confirmPaymentAction, rejectPaymentAction } from "./actions";
+import { confirmPaymentAction, refundPaymentAction, rejectPaymentAction } from "./actions";
 
 export default async function PaymentsQueuePage() {
   const payments = await prisma.payment.findMany({
@@ -9,7 +9,7 @@ export default async function PaymentsQueuePage() {
   });
 
   const recentDecided = await prisma.payment.findMany({
-    where: { status: { in: ["SUCCEEDED", "FAILED"] } },
+    where: { status: { in: ["SUCCEEDED", "FAILED", "REFUNDED"] } },
     include: { subscription: { include: { student: { include: { user: true } }, plan: true } } },
     orderBy: { createdAt: "desc" },
     take: 20,
@@ -88,6 +88,7 @@ export default async function PaymentsQueuePage() {
                 <th className="px-4 py-2">المبلغ</th>
                 <th className="px-4 py-2">الحالة</th>
                 <th className="px-4 py-2">التاريخ</th>
+                <th className="px-4 py-2">إجراء</th>
               </tr>
             </thead>
             <tbody>
@@ -103,20 +104,47 @@ export default async function PaymentsQueuePage() {
                       className={
                         payment.status === "SUCCEEDED"
                           ? "rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700"
-                          : "rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700"
+                          : payment.status === "REFUNDED"
+                            ? "rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                            : "rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700"
                       }
                     >
-                      {payment.status === "SUCCEEDED" ? "مؤكد" : "مرفوض"}
+                      {payment.status === "SUCCEEDED"
+                        ? "مؤكد"
+                        : payment.status === "REFUNDED"
+                          ? "مسترجع"
+                          : "مرفوض"}
                     </span>
                   </td>
                   <td className="px-4 py-2">
                     {new Date(payment.createdAt).toLocaleDateString("ar-EG")}
                   </td>
+                  <td className="px-4 py-2">
+                    {payment.status === "SUCCEEDED" && (
+                      <form
+                        action={refundPaymentAction.bind(null, payment.id)}
+                        className="flex items-center gap-2"
+                      >
+                        <input
+                          name="reason"
+                          placeholder="سبب الاسترجاع"
+                          required
+                          className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                        >
+                          استرجاع
+                        </button>
+                      </form>
+                    )}
+                  </td>
                 </tr>
               ))}
               {recentDecided.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                  <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
                     لا يوجد سجل بعد.
                   </td>
                 </tr>

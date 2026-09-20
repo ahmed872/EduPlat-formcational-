@@ -2,7 +2,7 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole, toErrorResponse } from "@/lib/rbac";
-import { evaluateStreakForDay, recordHeartbeat } from "@/lib/business/study-time";
+import { assertHeartbeatTargetIsReal, evaluateStreakForDay, recordHeartbeat } from "@/lib/business/study-time";
 import { notifyIfTargetReached } from "@/lib/business/notifications";
 import { evaluateAchievementsForStudent } from "@/lib/business/achievements";
 import { getPlatformSetting, PLATFORM_SETTING_KEYS } from "@/lib/platform-settings";
@@ -23,6 +23,7 @@ export async function POST(request: Request) {
     const { type, refId } = bodySchema.parse(await request.json());
     const studentId = session.user.studentProfileId!;
 
+    await assertHeartbeatTargetIsReal(prisma, { studentId, type, refId });
     const result = await recordHeartbeat(prisma, { studentId, type, refId });
 
     if (result.creditedSeconds > 0) {

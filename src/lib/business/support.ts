@@ -1,5 +1,6 @@
 import type { PrismaClient, SupportCategory, SupportStatus } from "@prisma/client";
 import { ForbiddenError } from "@/lib/rbac";
+import { notify } from "@/lib/business/notifications";
 
 export async function createSupportTicket(
   prisma: PrismaClient,
@@ -58,6 +59,38 @@ export async function replyToTicket(
     where: { id: ticket.id },
     data: isStaff && ticket.status === "OPEN" ? { status: "IN_PROGRESS" } : {},
   });
+
+  // A reply produced no notification at all before this — the other side
+  // only found out by revisiting the ticket page. Staff replying notifies
+  // the ticket's own author; the author replying notifies every
+  // TEACHER_ADMIN, since there is no per-ticket staff assignment model.
+  if (isStaff) {
+    if (ticket.authorId !== params.authorId) {
+      await notify(prisma, {
+        userId: ticket.authorId,
+        type: "SUPPORT_REPLY",
+        title: "رد جديد على تذكرة الدعم",
+        body: params.body.slice(0, 200),
+        metadata: { ticketId: ticket.id },
+      });
+    }
+  } else {
+    const staff = await prisma.user.findMany({
+      where: { role: "TEACHER_ADMIN" },
+      select: { id: true },
+    });
+    await Promise.all(
+      staff.map((member) =>
+        notify(prisma, {
+          userId: member.id,
+          type: "SUPPORT_REPLY",
+          title: "رد جديد على تذكرة دعم",
+          body: params.body.slice(0, 200),
+          metadata: { ticketId: ticket.id },
+        }),
+      ),
+    );
+  }
 
   return reply;
 }

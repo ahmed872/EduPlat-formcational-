@@ -134,6 +134,56 @@ describe("replyToTicket", () => {
     expect(updated.status).toBe("IN_PROGRESS");
   });
 
+  it("notifies the ticket author when staff replies", async () => {
+    // Regression test for a real gap: replyToTicket created no notification
+    // at all — the other party only found out by revisiting the page.
+    const student = await createStudent();
+    const user = await studentUser(student.id);
+    const teacher = await createTeacherUser();
+    const ticket = await createSupportTicket(prisma, {
+      authorId: user.id,
+      category: "OTHER",
+      subject: "س",
+      description: "و",
+    });
+
+    await replyToTicket(prisma, {
+      ticketId: ticket.id,
+      authorId: teacher.id,
+      authorRole: "TEACHER_ADMIN",
+      body: "جاري النظر في الأمر",
+    });
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: user.id, type: "SUPPORT_REPLY" },
+    });
+    expect(notifications).toHaveLength(1);
+  });
+
+  it("notifies teacher/admin staff when the ticket author replies", async () => {
+    const student = await createStudent();
+    const user = await studentUser(student.id);
+    const teacher = await createTeacherUser();
+    const ticket = await createSupportTicket(prisma, {
+      authorId: user.id,
+      category: "OTHER",
+      subject: "س",
+      description: "و",
+    });
+
+    await replyToTicket(prisma, {
+      ticketId: ticket.id,
+      authorId: user.id,
+      authorRole: "STUDENT",
+      body: "تفاصيل إضافية",
+    });
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: teacher.id, type: "SUPPORT_REPLY" },
+    });
+    expect(notifications).toHaveLength(1);
+  });
+
   it("does not override a status a teacher already advanced past OPEN", async () => {
     const student = await createStudent();
     const user = await studentUser(student.id);

@@ -112,6 +112,14 @@ export async function startWatchSession(
  * threshold is crossed for the first time, marks it as a consumed view with
  * its ordinal view number. Merely opening the page never consumes a view —
  * only meaningful playback does.
+ *
+ * The view-limit gate (checkVideoAccess) only runs when a NEW session is
+ * opened — it must also be re-checked HERE, at the point a view is actually
+ * consumed, inside one transaction. Otherwise a student can open several
+ * WatchSessions back-to-back (each one starts before any of them has
+ * consumed a view, so the limit check at creation time never trips) and
+ * then flip each one's consumedView independently, exceeding video.viewLimit
+ * via ordinary API calls with no race required.
  */
 export async function updateWatchProgress(
   prisma: PrismaClient,
@@ -121,45 +129,58 @@ export async function updateWatchProgress(
     videoDurationSeconds: number;
   },
 ) {
-  const session = await prisma.watchSession.findUnique({
-    where: { id: params.sessionId },
-    include: { video: true },
-  });
-  if (!session) throw new Error("Watch session not found");
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.watchSession.findUnique({
+      where: { id: params.sessionId },
+      include: { video: true },
+    });
+    if (!session) throw new Error("Watch session not found");
 
-  const completionPercent =
-    params.videoDurationSeconds > 0
-      ? Math.min(100, (params.watchedSeconds / params.videoDurationSeconds) * 100)
-      : 0;
+    const completionPercent =
+      params.videoDurationSeconds > 0
+        ? Math.min(100, (params.watchedSeconds / params.videoDurationSeconds) * 100)
+        : 0;
 
-  const threshold = await getPlatformSetting<number>(
-    PLATFORM_SETTING_KEYS.VIEW_CONSUMPTION_THRESHOLD_PERCENT,
-  );
+    const threshold = await getPlatformSetting<number>(
+      PLATFORM_SETTING_KEYS.VIEW_CONSUMPTION_THRESHOLD_PERCENT,
+    );
 
-  const shouldConsume =
-    !session.consumedView && !session.video.isFree && completionPercent >= threshold;
+    const crossesThreshold =
+      !session.consumedView && !session.video.isFree && completionPercent >= threshold;
 
-  let viewNumber: number | null = session.viewNumber;
-  if (shouldConsume) {
-    const priorConsumed = await prisma.watchSession.count({
-      where: {
-        studentId: session.studentId,
-        videoId: session.videoId,
-        consumedView: true,
-        id: { not: session.id },
+    let shouldConsume = false;
+    let viewNumber: number | null = session.viewNumber;
+    if (crossesThreshold) {
+      // Re-count consumed views for THIS video, right now, inside the same
+      // transaction — a stale count read before several sessions were
+      // opened is exactly what let the limit be bypassed.
+      const consumedCount = await tx.watchSession.count({
+        where: {
+          studentId: session.studentId,
+          videoId: session.videoId,
+          consumedView: true,
+          id: { not: session.id },
+        },
+      });
+      if (consumedCount < session.video.viewLimit) {
+        shouldConsume = true;
+        viewNumber = consumedCount + 1;
+      }
+      // else: the limit was already reached by other sessions (opened
+      // concurrently or previously) — this session's progress is still
+      // recorded below, but it never gets to consume a view it has no
+      // budget left for.
+    }
+
+    return tx.watchSession.update({
+      where: { id: session.id },
+      data: {
+        watchedSeconds: params.watchedSeconds,
+        completionPercent,
+        consumedView: shouldConsume || session.consumedView,
+        viewNumber,
       },
     });
-    viewNumber = priorConsumed + 1;
-  }
-
-  return prisma.watchSession.update({
-    where: { id: session.id },
-    data: {
-      watchedSeconds: params.watchedSeconds,
-      completionPercent,
-      consumedView: shouldConsume || session.consumedView,
-      viewNumber,
-    },
   });
 }
 

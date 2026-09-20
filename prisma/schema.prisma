@@ -112,6 +112,7 @@ model ParentStudent {
   createdAt    DateTime       @default(now())
 
   @@unique([parentId, studentId])
+  @@index([studentId])
 }
 
 model TeacherProfile {
@@ -548,6 +549,7 @@ model Subscription {
   entitlements Entitlement[]
 
   @@index([studentId])
+  @@index([status, expiresAt])
 }
 
 enum EntitlementReason {
@@ -580,6 +582,7 @@ model Entitlement {
 
   @@index([studentId, videoId])
   @@index([studentId, lessonId])
+  @@index([subscriptionId])
 }
 
 enum PaymentStatus {
@@ -678,6 +681,7 @@ model StudyActivitySession {
   activeSeconds   Int               @default(0)
 
   @@index([studentId])
+  @@index([studentId, type, refId])
 }
 
 model DailyStudyStat {
@@ -778,7 +782,13 @@ model GameSession {
   startedAt DateTime       @default(now())
   endedAt   DateTime?
   score     Int            @default(0)
+  // Date-only (time truncated to midnight), set only for DAILY_MAIN sessions
+  // — backs the real "one play per day" constraint below. Left null for
+  // MINI sessions (always replayable), which never collide with each other
+  // since Postgres treats each NULL as distinct for uniqueness purposes.
+  playDate  DateTime?
 
+  @@unique([gameId, studentId, playDate])
   @@index([gameId, studentId])
 }
 
@@ -954,6 +964,8 @@ model Announcement {
   audienceType  AnnouncementAudience
   audienceRefId String?
   createdAt     DateTime             @default(now())
+
+  @@index([audienceType, audienceRefId])
 }
 
 // =========================================================================
@@ -1038,6 +1050,8 @@ model CareerExplorationResult {
   answers           Json
   suggestedFieldIds String[]       @default([])
   takenAt           DateTime       @default(now())
+
+  @@index([studentId])
 }
 
 // =========================================================================
@@ -1053,7 +1067,7 @@ model Certificate {
   issuedAt        DateTime       @default(now())
   certificateCode String         @unique
 
-  @@index([studentId, courseId])
+  @@unique([studentId, courseId])
 }
 
 // =========================================================================
@@ -1073,6 +1087,7 @@ model ReferralReward {
   createdAt         DateTime       @default(now())
 
   @@unique([referredStudentId])
+  @@index([referrerStudentId])
 }
 
 // =========================================================================
@@ -1160,6 +1175,8 @@ model Product {
   createdAt   DateTime      @default(now())
 
   orderItems OrderItem[]
+
+  @@index([status, stock])
 }
 
 enum OrderStatus {
@@ -1193,6 +1210,9 @@ model OrderItem {
   product    Product @relation(fields: [productId], references: [id])
   quantity   Int
   priceCents Int
+
+  @@index([orderId])
+  @@index([productId])
 }
 
 // =========================================================================

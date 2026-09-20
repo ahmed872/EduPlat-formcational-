@@ -58,6 +58,28 @@ describe("placeOrder", () => {
     expect(refreshed.stock).toBe(7);
   });
 
+  it("cannot oversell the last unit under concurrent orders", async () => {
+    // Regression test for a real race: a plain "read stock, compare, then
+    // decrement" (even inside a $transaction) lets two concurrent orders
+    // for the last unit both read stock=1, both pass, and both decrement —
+    // driving stock negative. With stock=1 and 5 concurrent buyers, exactly
+    // 1 order may succeed.
+    const product = await createProduct({ stock: 1 });
+    const students = await Promise.all(Array.from({ length: 5 }, () => createStudent()));
+
+    const results = await Promise.allSettled(
+      students.map((student) =>
+        placeOrder(prisma, { studentId: student.id, items: [{ productId: product.id, quantity: 1 }] }),
+      ),
+    );
+
+    const succeeded = results.filter((r) => r.status === "fulfilled");
+    expect(succeeded).toHaveLength(1);
+
+    const refreshed = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });
+    expect(refreshed.stock).toBe(0);
+  });
+
   it("rejects an order exceeding real stock, without changing stock", async () => {
     const student = await createStudent();
     const product = await createProduct({ stock: 2 });

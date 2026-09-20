@@ -17,6 +17,7 @@ export const PLATFORM_SETTING_KEYS = {
   REFERRAL_REWARD_DAYS: "referral_reward_days",
   LOGIN_RATE_LIMIT_MAX_ATTEMPTS: "login_rate_limit_max_attempts",
   LOGIN_RATE_LIMIT_WINDOW_MINUTES: "login_rate_limit_window_minutes",
+  QUIZ_ABANDONED_ATTEMPT_HOURS: "quiz_abandoned_attempt_hours",
 } as const;
 
 export type PlatformSettingKey =
@@ -33,6 +34,7 @@ const DEFAULTS: Record<PlatformSettingKey, unknown> = {
   [PLATFORM_SETTING_KEYS.REFERRAL_REWARD_DAYS]: 7,
   [PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_MAX_ATTEMPTS]: 5,
   [PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_WINDOW_MINUTES]: 15,
+  [PLATFORM_SETTING_KEYS.QUIZ_ABANDONED_ATTEMPT_HOURS]: 24,
 };
 
 export async function getPlatformSetting<T = unknown>(

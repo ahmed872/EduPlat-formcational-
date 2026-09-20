@@ -1,11 +1,122 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createStudent } from "@/test/factories";
-import { evaluateStreakForDay, recordHeartbeat } from "@/lib/business/study-time";
+import {
+  createCourse,
+  createExperiment,
+  createLesson,
+  createStudent,
+  createSubscriptionPlan,
+  createVideo,
+} from "@/test/factories";
+import {
+  assertHeartbeatTargetIsReal,
+  evaluateStreakForDay,
+  recordHeartbeat,
+} from "@/lib/business/study-time";
+import { grantEntitlementsForSubscription } from "@/lib/business/video-access";
 
 beforeEach(async () => {
   await resetDatabase();
+});
+
+async function subscribeStudentToCourse(studentId: string, courseId: string) {
+  const plan = await createSubscriptionPlan();
+  await prisma.subscriptionPlanItem.create({ data: { planId: plan.id, courseId } });
+  const subscription = await prisma.subscription.create({
+    data: {
+      studentId,
+      planId: plan.id,
+      status: "ACTIVE",
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365),
+    },
+  });
+  await grantEntitlementsForSubscription(prisma, subscription.id);
+}
+
+describe("assertHeartbeatTargetIsReal", () => {
+  it("rejects a completely fabricated video refId", async () => {
+    // Regression test for a real bug: the heartbeat endpoint accepted ANY
+    // client-supplied refId with no validation, letting a script fabricate
+    // unlimited study time against a refId that doesn't even exist.
+    const student = await createStudent();
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, {
+        studentId: student.id,
+        type: "VIDEO",
+        refId: "totally-made-up-video-id",
+      }),
+    ).rejects.toThrow(/access/);
+  });
+
+  it("rejects a real video the student is not entitled to", async () => {
+    const student = await createStudent();
+    const lesson = await createLesson();
+    const video = await createVideo({ lessonId: lesson.id });
+
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, {
+        studentId: student.id,
+        type: "VIDEO",
+        refId: video.id,
+      }),
+    ).rejects.toThrow(/access/);
+  });
+
+  it("allows a real, entitled video", async () => {
+    const student = await createStudent();
+    const course = await createCourse();
+    const lesson = await createLesson({ courseId: course.id });
+    const video = await createVideo({ lessonId: lesson.id });
+    await subscribeStudentToCourse(student.id, course.id);
+
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, {
+        studentId: student.id,
+        type: "VIDEO",
+        refId: video.id,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a completely fabricated exercise refId", async () => {
+    const student = await createStudent();
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, {
+        studentId: student.id,
+        type: "EXERCISE",
+        refId: "totally-made-up-experiment-id",
+      }),
+    ).rejects.toThrow(/access|exist/);
+  });
+
+  it("allows a free lesson's exercise with no entitlement needed", async () => {
+    const student = await createStudent();
+    const lesson = await createLesson({ isFree: true });
+    const experiment = await createExperiment({ lessonId: lesson.id });
+
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, {
+        studentId: student.id,
+        type: "EXERCISE",
+        refId: experiment.id,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a paid lesson's exercise for a non-entitled student", async () => {
+    const student = await createStudent();
+    const lesson = await createLesson({ isFree: false });
+    const experiment = await createExperiment({ lessonId: lesson.id });
+
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, {
+        studentId: student.id,
+        type: "EXERCISE",
+        refId: experiment.id,
+      }),
+    ).rejects.toThrow(/access/);
+  });
 });
 
 describe("study-time heartbeat tracking", () => {
@@ -38,6 +149,35 @@ describe("study-time heartbeat tracking", () => {
     });
     expect(stat?.videoSeconds).toBe(20);
     expect(stat?.totalActiveSeconds).toBe(20);
+  });
+
+  it("never double-credits the same elapsed gap under concurrent heartbeat requests", async () => {
+    // Regression test for a real race: a plain read-then-write (findFirst
+    // then update, even without an explicit lock) let two near-simultaneous
+    // heartbeats for the same session both read the same lastHeartbeatAt
+    // baseline and both credit the same elapsed gap, double-counting active
+    // seconds that feed streaks/targets/achievements.
+    const student = await createStudent();
+    const t0 = new Date("2026-09-18T10:00:00Z");
+    await recordHeartbeat(prisma, { studentId: student.id, type: "VIDEO", refId: "video-1", now: t0 });
+
+    const nextTick = new Date(t0.getTime() + 10_000);
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        recordHeartbeat(prisma, {
+          studentId: student.id,
+          type: "VIDEO",
+          refId: "video-1",
+          now: nextTick,
+        }),
+      ),
+    );
+
+    const totalCredited = results.reduce((sum, r) => sum + r.creditedSeconds, 0);
+    expect(totalCredited).toBe(10); // the 10s gap credited exactly once, not 5 times
+
+    const stat = await prisma.dailyStudyStat.findFirst({ where: { studentId: student.id } });
+    expect(stat?.videoSeconds).toBe(10);
   });
 
   it("does not count time while the video is paused (heartbeats stop)", async () => {

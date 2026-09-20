@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { canPlayGame } from "@/lib/business/games";
+import { canPlayGame, toPublicGameQuestions } from "@/lib/business/games";
 import type { GameQuestion } from "@/lib/business/games";
 import { startPlay } from "../actions";
 import { GameRunner } from "../game-runner";
@@ -31,7 +31,7 @@ export default async function PlayGamePage({
         <GameRunner
           gameId={game.id}
           sessionId={inProgress.id}
-          questions={config.questions}
+          questions={toPublicGameQuestions(config.questions)}
           durationMinutes={game.durationMinutes}
           startedAt={inProgress.startedAt.toISOString()}
         />

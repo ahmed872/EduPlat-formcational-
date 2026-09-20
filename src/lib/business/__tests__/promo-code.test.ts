@@ -78,6 +78,30 @@ describe("promo codes", () => {
     ).rejects.toThrow(/usage limit/i);
   });
 
+  it("never lets concurrent redemptions push usedCount past usageLimit", async () => {
+    // Regression test for a real race: a plain read-then-write usage-limit
+    // check (even inside a $transaction) lets several concurrent
+    // redemptions near the cap all read a stale usedCount and all succeed.
+    // With usageLimit=1 and 5 concurrent students racing, exactly 1 may
+    // succeed — not more.
+    const promo = await prisma.promoCode.create({
+      data: { code: "RACE1", type: "FREE_100", usageLimit: 1 },
+    });
+    const students = await Promise.all(Array.from({ length: 5 }, () => createStudent()));
+
+    const results = await Promise.allSettled(
+      students.map((student) =>
+        redeemPromoCode(prisma, { code: promo.code, studentId: student.id }),
+      ),
+    );
+
+    const succeeded = results.filter((r) => r.status === "fulfilled");
+    expect(succeeded).toHaveLength(1);
+
+    const updated = await prisma.promoCode.findUniqueOrThrow({ where: { id: promo.id } });
+    expect(updated.usedCount).toBe(1);
+  });
+
   it("prevents the same student from redeeming a code twice", async () => {
     const student = await createStudent();
     const promo = await prisma.promoCode.create({

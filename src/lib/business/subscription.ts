@@ -117,7 +117,17 @@ export async function startSubscriptionCheckout(
   if (intent.status === "SUCCEEDED") {
     await grantEntitlementsForSubscription(prisma, subscription.id);
     await notifySubscriptionActivated(prisma, params.studentId, plan.name);
-    await applyPendingReferralReward(prisma, params.studentId);
+    // Deliberately NOT calling applyPendingReferralReward here: this branch
+    // is only ever reached for a genuinely zero-amount checkout (a free
+    // plan, or a promo that discounted the price to zero) — the payment
+    // provider never returns SUCCEEDED synchronously for a non-zero amount
+    // (see payments/provider.ts). referral.ts's own stated intent is to
+    // reward a real signup-to-PAYING-customer conversion, not an account
+    // creation — crediting the referrer here would let anyone farm referral
+    // rewards by registering, applying a $0 promo, and never paying
+    // anything. The only place that legitimately triggers the reward is
+    // confirmPayment(), which requires a human to have verified real money
+    // actually arrived for a non-zero amount.
   }
 
   return { subscription, payment, instructions: intent.instructions };
@@ -140,14 +150,24 @@ export async function confirmPayment(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const confirmedPayment = await tx.payment.update({
-      where: { id: payment.id },
+    // The status check above is a plain read — two concurrent confirm calls
+    // for the same payment could both pass it before either write lands.
+    // This conditional update (`WHERE status = 'PENDING'`) makes the check
+    // and the write atomic: only one confirm can actually transition the
+    // payment, closing a double SUBSCRIPTION_ACTIVATED notification / double
+    // entitlement-grant race.
+    const claimed = await tx.payment.updateMany({
+      where: { id: payment.id, status: "PENDING" },
       data: {
         status: "SUCCEEDED",
         verifiedAt: new Date(),
         confirmedById: params.adminUserId,
       },
     });
+    if (claimed.count === 0) {
+      throw new Error(`Cannot confirm a payment in status ${payment.status}`);
+    }
+    const confirmedPayment = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
     await tx.subscription.update({
       where: { id: payment.subscriptionId },
       data: { status: "ACTIVE" },

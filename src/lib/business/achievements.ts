@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { notify } from "@/lib/business/notifications";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 export const ACHIEVEMENT_METRICS = [
   "STREAK_DAYS",
@@ -96,9 +97,23 @@ export async function evaluateAchievementsForStudent(
     // never unlocks, same honesty stance as everywhere else in the app.
     if (!criteria) continue;
     if (metrics[criteria.metric] >= criteria.threshold) {
-      await prisma.studentAchievement.create({
-        data: { studentId, achievementId: achievement.id },
-      });
+      // The @@unique([studentId, achievementId]) constraint is what
+      // actually prevents a duplicate row when two triggers for the same
+      // student race each other (e.g. a quiz-pass and a heartbeat's streak
+      // update landing at nearly the same time) — the `earnedIds` check
+      // above is only a fast path. Without this catch, the LOSER of that
+      // race got an unhandled P2002 that failed its entire caller request
+      // (e.g. a game-score submission whose points had already committed)
+      // even though nothing was actually wrong: the achievement was simply
+      // awarded a moment earlier by the other trigger.
+      try {
+        await prisma.studentAchievement.create({
+          data: { studentId, achievementId: achievement.id },
+        });
+      } catch (error) {
+        if (isUniqueConstraintError(error)) continue;
+        throw error;
+      }
       await notify(prisma, {
         userId: student.userId,
         type: "ACHIEVEMENT_UNLOCKED",

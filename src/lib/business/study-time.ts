@@ -1,4 +1,5 @@
 import type { PrismaClient, StudyActivityType } from "@prisma/client";
+import { checkVideoAccess } from "@/lib/business/video-access";
 
 /**
  * Any gap between heartbeats larger than this is treated as the student
@@ -10,6 +11,67 @@ const HEARTBEAT_MAX_GAP_SECONDS = 30;
 
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/**
+ * The heartbeat endpoint credits real study time based only on cadence
+ * (recordHeartbeat below) — without this check, it never validated that
+ * `refId` refers to a real piece of content the student actually has a
+ * reason to be engaging with. A script could otherwise POST here every
+ * ~20s with a completely fabricated refId, indefinitely accumulating
+ * activeSeconds that feed daily targets, streaks, and points/study-based
+ * achievements with no real learning behind any of it. This does not need
+ * to perfectly replicate every access rule — it only needs to reject a
+ * refId with no legitimate relationship to the student at all.
+ */
+export async function assertHeartbeatTargetIsReal(
+  prisma: PrismaClient,
+  params: { studentId: string; type: StudyActivityType; refId: string },
+): Promise<void> {
+  if (params.type === "VIDEO") {
+    const decision = await checkVideoAccess(prisma, {
+      studentId: params.studentId,
+      videoId: params.refId,
+    });
+    if (!decision.allowed) {
+      throw new Error("Cannot record study time for a video you don't have access to");
+    }
+    return;
+  }
+
+  // EXERCISE
+  const experiment = await prisma.experiment.findUnique({
+    where: { id: params.refId },
+    select: { lessonId: true },
+  });
+  if (!experiment) {
+    throw new Error("Cannot record study time for a non-existent exercise");
+  }
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: experiment.lessonId },
+    select: { isFree: true },
+  });
+  if (!lesson) {
+    throw new Error("Cannot record study time for a non-existent exercise");
+  }
+  if (lesson.isFree) return;
+
+  const now = new Date();
+  const entitled = await prisma.entitlement.findFirst({
+    where: {
+      studentId: params.studentId,
+      lessonId: experiment.lessonId,
+      revokedAt: null,
+      OR: [
+        { subscriptionId: { not: null }, subscription: { status: "ACTIVE", expiresAt: { gt: now } } },
+        { subscriptionId: null, expiresAt: null },
+        { subscriptionId: null, expiresAt: { gt: now } },
+      ],
+    },
+  });
+  if (!entitled) {
+    throw new Error("Cannot record study time for an exercise you don't have access to");
+  }
 }
 
 /**
@@ -57,12 +119,26 @@ export async function recordHeartbeat(
     });
   } else {
     creditedSeconds = Math.max(0, gapSeconds);
-    session = await prisma.studyActivitySession.update({
-      where: { id: openSession.id },
+    // Optimistic-concurrency guard: the WHERE clause repeats the exact
+    // lastHeartbeatAt just read, so the update only applies if nothing else
+    // has touched this session since. Without it, two near-simultaneous
+    // heartbeat requests (a client retry, a duplicated network request) for
+    // the same session both read the same baseline and would otherwise both
+    // credit the same elapsed gap, double-counting active seconds.
+    const applied = await prisma.studyActivitySession.updateMany({
+      where: { id: openSession.id, lastHeartbeatAt: openSession.lastHeartbeatAt },
       data: {
         lastHeartbeatAt: now,
         activeSeconds: { increment: creditedSeconds },
       },
+    });
+    if (applied.count === 0) {
+      // Lost the race to a concurrent heartbeat — that other request already
+      // credited this exact gap, so this one credits nothing further.
+      creditedSeconds = 0;
+    }
+    session = await prisma.studyActivitySession.findUniqueOrThrow({
+      where: { id: openSession.id },
     });
   }
 

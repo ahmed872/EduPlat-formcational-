@@ -31,6 +31,7 @@ const NAV_ITEMS = [
   { href: "/teacher/subscriptions", label: "خطط الاشتراك" },
   { href: "/teacher/promo-codes", label: "أكواد الخصم" },
   { href: "/teacher/payments", label: "المدفوعات" },
+  { href: "/teacher/entitlements", label: "منح وصول استثنائي" },
   { href: "/teacher/targets", label: "أهداف المذاكرة" },
 ];
 
