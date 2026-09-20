@@ -28,7 +28,7 @@ export async function setStatus(ticketId: string, status: SupportStatus) {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
-  await updateTicketStatus(prisma, { ticketId, status });
+  await updateTicketStatus(prisma, { ticketId, status, actorRole: session.user.role });
 
   revalidatePath(`/teacher/support/${ticketId}`);
   revalidatePath("/teacher/support");

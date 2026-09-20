@@ -194,7 +194,7 @@ describe("replyToTicket", () => {
       subject: "س",
       description: "و",
     });
-    await updateTicketStatus(prisma, { ticketId: ticket.id, status: "RESOLVED" });
+    await updateTicketStatus(prisma, { ticketId: ticket.id, status: "RESOLVED", actorRole: "TEACHER_ADMIN" });
 
     await replyToTicket(prisma, {
       ticketId: ticket.id,
@@ -205,6 +205,25 @@ describe("replyToTicket", () => {
 
     const updated = await prisma.supportTicket.findUniqueOrThrow({ where: { id: ticket.id } });
     expect(updated.status).toBe("RESOLVED");
+  });
+});
+
+describe("updateTicketStatus", () => {
+  it("rejects a non-TEACHER_ADMIN actor", async () => {
+    // Regression test: authorization used to live only in the one caller
+    // (teacher/support/actions.ts), not in the shared function itself.
+    const student = await createStudent();
+    const user = await studentUser(student.id);
+    const ticket = await createSupportTicket(prisma, {
+      authorId: user.id,
+      category: "OTHER",
+      subject: "س",
+      description: "و",
+    });
+
+    await expect(
+      updateTicketStatus(prisma, { ticketId: ticket.id, status: "RESOLVED", actorRole: "STUDENT" }),
+    ).rejects.toThrow(ForbiddenError);
   });
 });
 
@@ -248,7 +267,7 @@ describe("getTicketsForAuthor / getAllTickets", () => {
       subject: "ب",
       description: "و",
     });
-    await updateTicketStatus(prisma, { ticketId: t1.id, status: "RESOLVED" });
+    await updateTicketStatus(prisma, { ticketId: t1.id, status: "RESOLVED", actorRole: "TEACHER_ADMIN" });
 
     const resolved = await getAllTickets(prisma, { status: "RESOLVED" });
     expect(resolved).toHaveLength(1);

@@ -124,6 +124,39 @@ describe("approveParentLink / rejectParentLink", () => {
     ).rejects.toThrow(/لا يمكنك الموافقة/);
   });
 
+  it("lets a student revoke an already-approved parent link, cutting off access", async () => {
+    // Regression coverage for a real gap: there was previously no UI path
+    // to remove an approved link at all. rejectParentLink itself has no
+    // restriction to pending-only rows — it works here unchanged, this
+    // test documents that it correctly cuts off access once used that way.
+    const parent = await createParent();
+    const student = await createStudent();
+    const parentUser = await parentUserOf(parent);
+    const studentUser = await studentUserOf(student);
+
+    const link = await requestParentLink(prisma, {
+      parentUserId: parentUser.id,
+      studentEmail: studentUser.email,
+    });
+    await approveParentLink(prisma, { parentStudentId: link.id, studentId: student.id });
+
+    await expect(
+      assertParentCanAccessStudent(prisma, {
+        parentUserId: parentUser.id,
+        studentProfileId: student.id,
+      }),
+    ).resolves.not.toThrow();
+
+    await rejectParentLink(prisma, { parentStudentId: link.id, studentId: student.id });
+
+    await expect(
+      assertParentCanAccessStudent(prisma, {
+        parentUserId: parentUser.id,
+        studentProfileId: student.id,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("removes the request entirely on rejection", async () => {
     const parent = await createParent();
     const student = await createStudent();

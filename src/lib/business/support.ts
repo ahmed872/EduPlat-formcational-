@@ -95,10 +95,19 @@ export async function replyToTicket(
   return reply;
 }
 
+/**
+ * TEACHER_ADMIN-only. The check lives here, not just at the one current
+ * caller — a shared business function with no authorization of its own is
+ * one accidental future reuse (a script, a new page) away from becoming an
+ * unprotected status-change path.
+ */
 export async function updateTicketStatus(
   prisma: PrismaClient,
-  params: { ticketId: string; status: SupportStatus },
+  params: { ticketId: string; status: SupportStatus; actorRole: string },
 ) {
+  if (params.actorRole !== "TEACHER_ADMIN") {
+    throw new ForbiddenError("لا يمكن لغير المعلم/الإدارة تغيير حالة تذكرة الدعم");
+  }
   return prisma.supportTicket.update({
     where: { id: params.ticketId },
     data: { status: params.status },

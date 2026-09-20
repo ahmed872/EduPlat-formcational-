@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { getPendingLinkRequestsForStudent } from "@/lib/business/parent-link";
-import { approveRequest, rejectRequest } from "./actions";
+import { approveRequest, rejectRequest, revokeLink } from "./actions";
 
 export default async function ParentRequestsPage() {
   const session = await auth();
@@ -69,9 +69,17 @@ export default async function ParentRequestsPage() {
             {approvedLinks.map((link) => (
               <li
                 key={link.id}
-                className="rounded-md border border-gray-100 bg-white px-3 py-2 text-sm"
+                className="flex items-center justify-between rounded-md border border-gray-100 bg-white px-3 py-2 text-sm"
               >
-                {link.parent.user.name}
+                <span>{link.parent.user.name}</span>
+                <form action={revokeLink.bind(null, link.id)}>
+                  <button
+                    type="submit"
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    إلغاء الربط
+                  </button>
+                </form>
               </li>
             ))}
           </ul>

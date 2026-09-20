@@ -41,7 +41,8 @@ export default async function TeacherLayout({
   children: ReactNode;
 }) {
   const session = await auth();
-  // Defense in depth: middleware.ts already gates /teacher/*, but every
+  // Defense in depth: proxy.ts (this repo's edge middleware, renamed per
+  // AGENTS.md) already gates /teacher/* at the edge, but every
   // server component that renders sensitive data re-checks role itself
   // rather than trusting routing alone.
   if (!session?.user || session.user.role !== "TEACHER_ADMIN") {

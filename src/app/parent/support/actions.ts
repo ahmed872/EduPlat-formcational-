@@ -6,6 +6,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import { createSupportTicket, replyToTicket } from "@/lib/business/support";
+import { assertParentCanAccessStudent } from "@/lib/business/parent-access";
 import type { SupportCategory } from "@prisma/client";
 
 export async function createTicket(formData: FormData) {
@@ -20,14 +21,14 @@ export async function createTicket(formData: FormData) {
     throw new Error("الرجاء إدخال موضوع ووصف المشكلة");
   }
 
+  // Reuses the same canonical link-check every other parent-facing read
+  // goes through, instead of re-implementing the approvedAt condition
+  // inline (which would silently drift if that check ever gained logic).
   if (studentId) {
-    const parentProfile = await prisma.parentProfile.findUniqueOrThrow({
-      where: { userId: session.user.id },
+    await assertParentCanAccessStudent(prisma, {
+      parentUserId: session.user.id,
+      studentProfileId: studentId,
     });
-    const link = await prisma.parentStudent.findFirst({
-      where: { parentId: parentProfile.id, studentId, approvedAt: { not: null } },
-    });
-    if (!link) throw new Error("لا يمكنك فتح تذكرة عن طالب غير مرتبط بحسابك");
   }
 
   const ticket = await createSupportTicket(prisma, {
