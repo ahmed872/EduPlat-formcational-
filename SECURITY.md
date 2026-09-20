@@ -66,6 +66,19 @@ interpolates table names read back from `pg_tables`, never user input.
   deterrent against casual screen-recording redistribution, not a
   cryptographic protection, and is described as such here rather than
   oversold.
+- **Known, honest gap (found in the final audit, not yet fixed)**: the
+  "token must match the current session" check in the streaming route
+  only runs when a session cookie is present at all — it is skipped
+  entirely for a request with none. This means a copied playback URL
+  works for any bearer, logged in or not, for the token's full lifetime
+  (currently 4 hours), as long as the underlying entitlement is still
+  active. Entitlement/refund/view-limit re-verification (above) is
+  unaffected by this — it still runs unconditionally on every request —
+  so this is a link-sharing risk, not an access-control bypass. The fix
+  (require a session matching the token's studentId unconditionally,
+  since a real viewer is always logged in anyway) was scoped but not
+  applied this audit for lack of test coverage on this specific route to
+  safely validate the change against.
 - **Not yet implemented**: HLS/DASH segmenting (needs a real media
   pipeline — no `ffmpeg` or transcoding service is available in this
   environment), concurrent-session/device-limit detection, and real DRM
@@ -104,15 +117,40 @@ change.
 
 - View-limit consumption requires crossing a configurable completion
   threshold (default 80%) — opening a page alone can never consume a paid
-  view.
+  view. The limit itself is re-checked atomically, inside a transaction,
+  at the exact moment a view is consumed (`updateWatchProgress`) — not
+  only when a watch session is first created — closing a real bug (fixed
+  in the final audit) where opening several sessions up front and only
+  then consuming them let every one flip to consumed independently,
+  exceeding the paid view limit via ordinary API calls.
 - Heartbeat crediting caps elapsed time per tick (30s) so a delayed or
-  replayed heartbeat cannot inflate study time.
-- Promo redemption is transactional (`$transaction`) so concurrent
-  redemptions cannot both slip through a usage-limit-reached code.
-- **Not yet implemented**: concurrent-session/device-change detection and
-  rate limiting at the HTTP layer. No automatic banning exists anywhere in
-  the codebase — the spec explicitly requires human review for weak
-  signals, and no such automation has been built to bypass that.
+  replayed heartbeat cannot inflate study time; the credit-or-not decision
+  itself is now an atomic optimistic-concurrency update (fixed in the
+  final audit), so two near-simultaneous heartbeats for the same session
+  can no longer both credit the same elapsed gap. The endpoint also now
+  validates that the `refId` a heartbeat claims refers to a real video/
+  exercise the student is actually entitled to, rather than accepting any
+  client-supplied string.
+- Promo-code usage-limit and store stock-decrement are both enforced via a
+  single atomic conditional `UPDATE` (`WHERE usedCount < limit` / `WHERE
+  stock >= quantity`), not a read-then-write — even inside a
+  `$transaction`, a plain check-then-act is not safe under Postgres's
+  default READ COMMITTED isolation, which was a real, exploitable race
+  fixed in the final audit (proven closed with genuine concurrent-load
+  tests against the real Postgres test database).
+- Certificate double-issuance and "one daily-game play per day" are both
+  backed by real `@@unique` database constraints (not just an
+  application-level check), for the same reason.
+- Login rate limiting is real and server-side (`src/lib/business/security.ts`):
+  a configurable rolling window of failed attempts per (case-insensitive)
+  email blocks further attempts regardless of whether a later password
+  would have been correct. Blocking an account now also invalidates an
+  already-issued session on its very next request, not just future logins.
+- **Not yet implemented**: concurrent-session/device-change detection (see
+  the "Not yet implemented" note above — would require moving off
+  stateless JWT sessions). No automatic banning exists anywhere in the
+  codebase — the spec explicitly requires human review for weak signals,
+  and no such automation has been built to bypass that.
 
 ## Known dependency advisories
 

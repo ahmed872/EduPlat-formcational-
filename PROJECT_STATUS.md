@@ -1,11 +1,14 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-19 (Phase 21 session)
+Last updated: 2026-09-20 (Final Full-System Audit session)
 
 ## Current phase
 
-Phase 21 (Advanced Security) is complete — this is the final phase of
-the originally-enumerated 21-phase plan. It builds on Phase 20 (Search),
+A full independent audit and hardening pass has been completed on top of
+all 21 originally-enumerated phases — see "Final full-system audit" below
+and `FINAL_AUDIT_REPORT.md` for the complete Requirement Coverage Matrix,
+findings, and remaining gaps. Phase 21 (Advanced Security) itself
+completed the originally-enumerated 21-phase plan. It builds on Phase 20 (Search),
 Phase 19 (Notifications &
 Announcements), Phase 18 (Store), Phase 17 (Teacher Profile &
 Support), Phase 16 (Certificates & Referral), Phase 15 (Career
@@ -1004,6 +1007,78 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   A clean rerun against the now-warmed server passed all 10 steps with
   zero errors.
 
+### Final full-system audit, gap closure & production hardening (new session)
+
+An independent, skeptical audit treating the original requirements — not
+prior phase reports, not PROJECT_STATUS.md, not the existing test count —
+as the sole source of truth. Ten parallel subsystem reviews (auth/RBAC,
+video security, exam/quiz gating, games/leaderboard/achievements wiring,
+store/promo/referral/certificates abuse, notifications/search
+authorization, full database schema integrity, a repo-wide dead-code
+sweep, parent system/reports/analytics, and career-guidance/teacher-profile/
+support ownership) found and this session fixed:
+- **5 CRITICAL bugs**: the three-view rule was bypassable via direct API
+  calls (limit checked at session creation, never at consumption); a quiz
+  score-coverage gap let a student omit hard/manual questions to inflate
+  their score and dodge manual grading; the lesson-sequence prerequisite
+  gate was never checked when starting/passing a quiz (only when
+  rendering the video page), letting a guessed/shared `quizId` skip the
+  whole chain; exam `timeLimitMinutes`/availability window had zero
+  server-side enforcement; and game scores were 100% client-trusted (with
+  the answer key sent to the browser in full), letting a single forged
+  request top every leaderboard/Hall-of-Fame ranking and points-based
+  achievement.
+- **Several HIGH races**: store stock-decrement, promo-code usage-limit,
+  certificate double-issuance, and daily-game-replay were all
+  check-then-act patterns exploitable under real concurrency (each closed
+  with an atomic conditional `UPDATE`/`updateMany` or a real `@@unique`
+  constraint, proven with `Promise.all`/`allSettled` tests against the
+  real Postgres test DB); `deleteGame`/`deleteQuestion` crashed with a raw
+  unhandled FK-violation; a blocked user's *already-issued* session kept
+  full access until natural JWT expiry (auth.ts's session callback now
+  re-verifies live status on every read).
+- **Several MEDIUM gaps**: the heartbeat endpoint accepted a fabricated
+  `refId` with zero validation and had its own double-credit race
+  (both fixed); referral rewards could be earned via a genuinely $0
+  checkout, contradicting the feature's own "real paying customer" intent
+  (removed); `confirmPayment`/`applyPendingReferralReward` TOCTOU races
+  (fixed); an achievement-award race threw an unhandled error at the
+  losing concurrent caller (fixed); support-ticket replies never
+  triggered any notification at all (added); MATCHING questions were
+  graded order-independently despite being positional (fixed); the quiz
+  attempt limit could be bypassed by abandoning attempts (fixed, with
+  auto-expiry so nobody gets stuck); manual grading had no point bounds
+  (clamped); `updateTicketStatus` had no authorization of its own (moved
+  into the shared function); a student had no way to ever revoke an
+  approved parent link (added).
+- **Two fully-built, fully-tested, but completely unreachable features**
+  wired up with real UI: `refundPayment` (`/teacher/payments`) and
+  `grantAdminEntitlement` (new `/teacher/entitlements`).
+- Added missing indexes (Product, CareerExplorationResult,
+  StudyActivitySession, ReferralReward, Subscription, Entitlement,
+  ParentStudent, OrderItem, Announcement) in migration
+  `20260920000000_final_audit_integrity_fixes`.
+- 220 → 237 tests, every fix backed by a regression test that fails
+  against the pre-fix code; every concurrency-class fix proven under real
+  concurrent load against the actual Postgres test database, never mocked.
+- **Honestly documented, not fixed this session** (precise scope, impact,
+  and why, for each — see `FINAL_AUDIT_REPORT.md`): signed-video-URL
+  redistribution to a session-less bearer within its 4h TTL; a narrow
+  residual `TARGET_REACHED` duplicate-notification race across two
+  different activity types; Analytics vs. Reports computing
+  lesson-completion/quiz-count metrics with divergent query scoping;
+  games having no real Mini/Daily duration or recurrence distinction
+  beyond the once-per-day gate; `CareerField` having no update/edit
+  action; three `TeacherProfile` schema fields
+  (`socialLinks`/`contactInfo`/`locations`) with no edit or display UI;
+  and a handful of database-level items (an `Entitlement` cascade-behavior
+  design tension, several FK-less `*Id` audit columns, minor numeric-type
+  nits) that would need a product decision or carry real blast-radius risk
+  to change blindly.
+- Full Requirement Coverage Matrix (46 requirements, each rated COMPLETE /
+  PARTIAL / NOT IMPLEMENTED / BLOCKED BY EXTERNAL INFRASTRUCTURE with
+  evidence) lives in `FINAL_AUDIT_REPORT.md` at the repo root.
+
 ## Not started (by priority order, all schema-ready)
 
 Real payment gateway integration, concurrent-session detection, HLS/DRM.
@@ -1179,7 +1254,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 220/220 passing (29 files)
+npx vitest run       # 237/237 passing (29 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1208,13 +1283,18 @@ appear on `/student/saved-moments`.
 
 ## Next recommended step
 
-All 21 phases of the originally-enumerated standing plan (Phase 2
-through Phase 21) are now complete, on top of the Phase-1 foundation.
-There is no further phase queued by the original spec. Any future work
-should come from a fresh, explicit request rather than an invented
-"Phase 22" — starting points, if asked for one, would most likely be:
-a real payment gateway integration (see "Known gaps" #1), concurrent-
-session detection (would require switching from JWT to database-backed
-sessions — see the Phase 21 section above), or HLS/DRM for video
-(see "Known gaps" #2), all of which are the honestly-documented
-remaining gaps rather than missing features.
+All 21 originally-enumerated phases are complete, and a full independent
+audit-and-hardening pass on top of them is also complete (see "Final
+full-system audit" above and `FINAL_AUDIT_REPORT.md`). There is no further
+phase queued by the original spec. Any future work should come from a
+fresh, explicit request. If asked for a starting point, the highest-value
+options — in rough priority order — are: (1) a real payment gateway
+integration, (2) aligning `reports.ts`'s query scoping with
+`analytics.ts`'s to remove the metrics-divergence gap, (3) a
+`CareerField` update action + `TeacherProfile` social/contact/location
+edit UI, (4) tightening the signed-video-URL check to require a matching
+session unconditionally, and (5) concurrent-session detection (would
+require switching from JWT to database-backed sessions — a real
+architectural change, not an extension of what exists). All of these are
+precisely scoped, honestly-documented remaining gaps, not missing
+features that were skipped or hidden.
