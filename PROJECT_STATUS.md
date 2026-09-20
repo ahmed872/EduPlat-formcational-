@@ -1058,9 +1058,20 @@ support ownership) found and this session fixed:
   StudyActivitySession, ReferralReward, Subscription, Entitlement,
   ParentStudent, OrderItem, Announcement) in migration
   `20260920000000_final_audit_integrity_fixes`.
-- 220 → 237 tests, every fix backed by a regression test that fails
+- 220 → 238 tests, every fix backed by a regression test that fails
   against the pre-fix code; every concurrency-class fix proven under real
   concurrent load against the actual Postgres test database, never mocked.
+- A real Playwright browser E2E pass (18 steps: registration, teacher
+  content authoring, sequential lesson gating, account blocking with live
+  session invalidation, rate limiting, search, achievements) ran clean
+  18/18 after fixes — and along the way caught a **sixth CRITICAL bug**
+  that no business-logic test had caught: `canAccessLesson` returned
+  `allowed: true` for any lesson with `isFree: true`, before ever checking
+  `requiredPreviousLessonId` — so a free lesson with a prerequisite was
+  wide open regardless of whether the prerequisite was met. Fixed by
+  removing the `isFree` short-circuit; `isFree` now only affects
+  entitlement/payment (`checkVideoAccess`), never sequential gating. See
+  `FINAL_AUDIT_REPORT.md`'s "E2E Findings" section for the full run.
 - **Honestly documented, not fixed this session** (precise scope, impact,
   and why, for each — see `FINAL_AUDIT_REPORT.md`): signed-video-URL
   redistribution to a session-less bearer within its 4h TTL; a narrow
@@ -1254,7 +1265,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 237/237 passing (29 files)
+npx vitest run       # 238/238 passing (29 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1280,6 +1291,19 @@ video → a brand-new student with zero subscriptions sees it under "دروس
 مجانية متاحة للجميع" on their dashboard (the bug this session found and
 fixed) → opens it, adds a bookmark and a note from the player → both
 appear on `/student/saved-moments`.
+
+Verified end-to-end with a real Playwright browser suite (final audit,
+18/18 steps passing): student registration → teacher builds a category,
+course, two lessons (one gated behind the other), uploads videos, and
+creates a lesson quiz → free lesson A appears on the student dashboard →
+lesson B is genuinely locked (real page, real locked-state message) until
+lesson A's quiz is passed through the actual exam UI → lesson B unlocks
+and its video renders → a second student's already-open session loses
+access the instant the teacher blocks them, with no new login involved →
+login rate limiting rejects even a correct 6th password after 5 wrong
+ones → global search finds the new course → achievements page loads.
+Full narrative and the one real bug this pass caught are in
+`FINAL_AUDIT_REPORT.md`'s "E2E Findings" section.
 
 ## Next recommended step
 

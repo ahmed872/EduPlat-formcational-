@@ -567,7 +567,12 @@ export async function canAccessLesson(
     where: { id: params.lessonId },
   });
 
-  if (lesson.isFree || !lesson.requiredPreviousLessonId) {
+  // `isFree` only means "no paid entitlement required" (see checkVideoAccess's
+  // FREE_VIDEO rule) — it must NOT also bypass the sequential-unlock
+  // requirement. A free lesson with a requiredPreviousLessonId still has to
+  // wait for that prerequisite, same as a paid one (real bug found in the
+  // final audit: this used to short-circuit on isFree alone).
+  if (!lesson.requiredPreviousLessonId) {
     return { allowed: true };
   }
 

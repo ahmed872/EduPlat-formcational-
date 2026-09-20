@@ -55,6 +55,42 @@ describe("quiz grading and lesson unlocking", () => {
     expect(notifications).toHaveLength(1);
   });
 
+  it("a free lesson with a prerequisite is still locked until that prerequisite is passed (isFree must not bypass sequential unlocking)", async () => {
+    const student = await createStudent();
+    const lessonA = await createLesson();
+    const lessonB = await createLesson({
+      isFree: true,
+      requiredPreviousLessonId: lessonA.id,
+    });
+    const question = await createQuestion({ correctAnswer: "A" });
+    const quiz = await createQuiz({
+      lessonId: lessonA.id,
+      passingScore: 60,
+      questionIds: [question.id],
+    });
+
+    const before = await canAccessLesson(prisma, {
+      studentId: student.id,
+      lessonId: lessonB.id,
+    });
+    expect(before.allowed).toBe(false);
+
+    const attempt = await startQuizAttempt(prisma, {
+      quizId: quiz.id,
+      studentId: student.id,
+    });
+    await submitQuizAttempt(prisma, {
+      attemptId: attempt.id,
+      answers: [{ questionId: question.id, studentAnswer: "A" }],
+    });
+
+    const after = await canAccessLesson(prisma, {
+      studentId: student.id,
+      lessonId: lessonB.id,
+    });
+    expect(after.allowed).toBe(true);
+  });
+
   it("failing the quiz keeps the next lesson locked", async () => {
     const student = await createStudent();
     const lessonA = await createLesson();

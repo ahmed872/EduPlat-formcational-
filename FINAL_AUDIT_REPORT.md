@@ -32,7 +32,7 @@ business-logic layer.
 
 The 21-phase build was substantially sound (no fabricated payment success,
 no plaintext secrets, consistent RBAC discipline, no classic IDOR found
-across dozens of checked mutations), but the audit found and fixed **five
+across dozens of checked mutations), but the audit found and fixed **six
 CRITICAL** business-integrity/security bugs that a determined user could
 have exploited with nothing more than direct API/server-action calls (no
 timing race required for most of them), plus a further set of **HIGH** and
@@ -41,10 +41,17 @@ and verified. A smaller number of **MEDIUM** feature-completeness gaps
 (missing edit UI for a few schema fields, a metrics-consistency issue
 between two reporting modules) were found, confirmed, and are documented
 below as explicit, scoped remaining work rather than silently left as
-"known gaps." Three commits (`9377212`, `1d61cdb`, `a38dea4`) contain every
-fix; the test suite grew from 220 to 237 tests, all passing against the
-real Postgres test database, and `npx tsc --noEmit`, `npx eslint .`, and
-`npm run build` are all clean.
+"known gaps." Four commits (`9377212`, `1d61cdb`, `a38dea4`, `71aa679`,
+plus one final commit for the E2E-discovered fix) contain every fix; the
+test suite grew from 220 to 238 tests, all passing against the real
+Postgres test database, and `npx tsc --noEmit`, `npx eslint .`, and
+`npm run build` are all clean. A real browser-driven Playwright pass (18
+end-to-end steps across registration, content authoring, sequential lesson
+gating, account blocking with live-session invalidation, and rate
+limiting) was run against the fixes as the mandate's required
+re-audit/secondary-pass step — and it caught a sixth CRITICAL bug that the
+business-logic test suite alone had missed (see below), which was fixed
+and given its own regression test before this report was finalized.
 
 ## Requirements Coverage
 
@@ -72,7 +79,7 @@ service would plug in.
 | 13 | Actual (not just opened-page) study-time tracking, heartbeat abuse resistance | COMPLETE (fixed this audit) | `src/lib/business/study-time.ts` (`assertHeartbeatTargetIsReal`, optimistic-concurrency update) | Yes, incl. concurrency test | — | — |
 | 14 | HLS/DASH/DRM/CDN/transcoding | NOT IMPLEMENTED | — | — | — | Genuinely requires external media infrastructure; no video-piracy-protection is or was claimed to be 100% effective, matching SECURITY.md |
 | 15 | Shorts (public, free, linked to source video+timestamp) | COMPLETE | `src/lib/business/shorts.ts` | Yes | — | — |
-| 16 | Sequential lesson gating (video → required experiments → quiz → next lesson), server-side | COMPLETE (fixed this audit — was CRITICAL) | `src/lib/business/quiz.ts` (`startQuizAttempt` now calls `canAccessLesson`) | Yes | Yes | — |
+| 16 | Sequential lesson gating (video → required experiments → quiz → next lesson), server-side | COMPLETE (fixed this audit — was CRITICAL, twice) | `src/lib/business/quiz.ts` (`startQuizAttempt` now calls `canAccessLesson`; `canAccessLesson` itself fixed again after E2E caught `isFree` bypassing the prerequisite gate entirely) | Yes | Yes | — |
 | 17 | Question bank: MCQ/True-False/multi-select/matching/short-answer/essay | COMPLETE | `prisma/schema.prisma` `QuestionType`, `src/lib/business/quiz.ts` | Yes | — | — |
 | 18 | Random/fixed question selection, consistent across serve/validate/score | COMPLETE | `src/lib/business/quiz.ts` | Yes | — | — |
 | 19 | Exam time limit and availability window enforced **server-side** | COMPLETE (fixed this audit — was CRITICAL) | `src/lib/business/quiz.ts` (`submitQuizAttempt` computes a real deadline) | Yes | — | — |
@@ -124,10 +131,24 @@ service would plug in.
 5. **Game score was 100% client-trusted, and the answer key was sent to the
    browser in full** — a single forged request could top every leaderboard
    and Hall-of-Fame ranking and unlock every points-based achievement.
+6. **`canAccessLesson`'s `isFree` short-circuit bypassed the sequential
+   lesson-unlock requirement entirely** (found by the Playwright E2E pass,
+   not the unit-test suite): `if (lesson.isFree || !lesson.requiredPreviousLessonId)
+   return { allowed: true }` meant that as soon as a lesson was marked free
+   (a routine marketing setting — "free lessons to attract students"), its
+   `requiredPreviousLessonId` prerequisite was silently ignored. A student
+   could watch a free Lesson B and take its quiz without ever completing
+   Lesson A, defeating the entire sequential-curriculum feature for every
+   free lesson with a prerequisite — this is the exact "existing but not
+   wired" bug class the mandate specifically asked this audit to hunt for,
+   and it survived the first audit wave's business-logic tests because none
+   of them combined `isFree: true` with a `requiredPreviousLessonId` in the
+   same lesson (`quiz.test.ts`'s existing gating tests all used
+   default/non-free lessons).
 
 ## Bugs Fixed
 
-All five CRITICAL items above, plus (HIGH) store stock-decrement and
+All six CRITICAL items above, plus (HIGH) store stock-decrement and
 promo-code usage-limit races, certificate double-issuance and
 daily-game-replay races, unhandled FK-violation crashes on deleting a
 played game or an answered question, and a blocked user's live session
@@ -140,8 +161,15 @@ attempt-limit bypass via abandoned attempts, unbounded manual-grading
 points, `updateTicketStatus` having no authorization of its own, and a
 missing parent-link revocation capability. Two previously fully-built but
 completely unreachable features (`refundPayment`, `grantAdminEntitlement`)
-were given real teacher UI. Every fix has a dedicated regression test; see
-commits `9377212`, `1d61cdb`, `a38dea4`.
+were given real teacher UI. The sixth CRITICAL bug (`isFree` bypassing
+sequential lesson gating, found by the E2E pass) was fixed by removing the
+`lesson.isFree ||` short-circuit from `canAccessLesson` so the prerequisite
+check always runs when `requiredPreviousLessonId` is set, regardless of
+the lesson's own price/free status — `isFree` now correctly affects only
+entitlement/payment (`checkVideoAccess`'s `FREE_VIDEO` rule), never the
+curriculum-sequencing rule. Every fix has a dedicated regression test; see
+commits `9377212`, `1d61cdb`, `a38dea4`, `71aa679`, and the final
+E2E-driven fix commit.
 
 ## Security Findings
 
@@ -243,13 +271,80 @@ audit added a test that would fail against the pre-fix code, and every
 concurrency-class bug got a test using real `Promise.all`/`allSettled`
 concurrency against the actual Postgres test database (never a mock) —
 proving the fix under the same conditions that caused the original bug,
-not just a sequential happy-path check. The suite now stands at 237 tests,
-all passing.
+not just a sequential happy-path check. The suite now stands at 238 tests
+(237 from the business-logic audit passes, plus one more added after the
+E2E pass caught the `isFree`/sequential-gating bug), all passing.
 
 ## E2E Findings
 
-_(Filled in after the final Playwright verification pass completes — see
-the addendum at the end of this document / the session's chat summary.)_
+A real browser-driven Playwright suite (18 steps, transient dev dependency
+— installed, run, then uninstalled per this project's established
+convention of never committing test infrastructure) was run against a live
+`next dev` server and a real Postgres database, exercising actual page
+navigation, form submission, and DOM assertions rather than calling
+business-logic functions directly. Final result: **18/18 steps passing.**
+
+Flows verified end-to-end through real pages, in order:
+1. Student self-registration lands on the student dashboard.
+2. Teacher creates a category and a course through the CMS UI.
+3. Teacher publishes the course and adds two lessons — Lesson A (free, no
+   prerequisite) and Lesson B (free, `requiredPreviousLessonId` = Lesson A).
+4. Teacher uploads a video to each lesson and publishes both.
+5. Teacher builds a question bank, adds a question, and creates a
+   lesson-quiz for Lesson A.
+6. **Free lesson A appears on the student dashboard's "free lessons"
+   section** (this exercises the real `Lesson.isFree && Video.isFree &&
+   status === PUBLISHED` discovery query, not just the business-logic
+   layer).
+7. **Lesson B is genuinely locked** (`يجب إكمال الدرس السابق واجتياز
+   اختباره أولًا` shown, no video player rendered) before Lesson A's quiz
+   is passed — this step is what caught CRITICAL bug #6 above: the first
+   E2E run showed Lesson B's video playing immediately despite an unmet
+   prerequisite, because `canAccessLesson` was short-circuiting on
+   `isFree`. Confirmed as a genuine application bug (not a script issue)
+   by reading `canAccessLesson`'s source directly, fixed, and re-verified
+   green on rerun.
+8. Student takes and passes Lesson A's real quiz through the actual exam
+   UI (question rendering, radio selection, submission, pass/fail
+   feedback).
+9. **Lesson B is now unlocked** and its video player actually renders,
+   proving the gate opens correctly once the real prerequisite is met.
+10. A second student registers and keeps a live session open; the teacher
+    blocks that account; the **already-logged-in** student loses access on
+    their very next request with no new login involved (proving the
+    `auth.ts` session-callback live-status re-check fixed earlier in this
+    audit is wired correctly end-to-end, not just at the unit level).
+11. The blocked student cannot log in directly either; the teacher unblocks
+    them and login works again.
+12. Login rate limiting: 5 wrong passwords lock the account such that even
+    a 6th, *correct* password is still rejected.
+13. Global search finds the newly created course by title.
+14. The achievements page loads correctly for a student who just passed a
+    quiz.
+
+Every failure encountered while building this suite (across five
+iterations) was individually root-caused by reading the actual page
+source before changing the script — never assumed. All but one were
+confirmed to be script-authoring mistakes (ambiguous locators matching a
+closed `<select>`'s hidden `<option>`, a stale locator API call, leftover
+data from earlier script runs producing duplicate dashboard rows once
+lesson titles were reused). Exactly one was a genuine, previously-hidden
+application bug (CRITICAL bug #6, above) — precisely the outcome this kind
+of independent, real-browser verification pass exists to catch, and
+precisely why the mandate required it rather than accepting the
+business-logic test suite alone as proof.
+
+Not covered by this browser pass (relies on the already-rigorous
+Vitest/Postgres integration suite as its primary evidence instead, per
+sound testing practice — building full browser coverage for all
+~27 originally-listed workflows was not achievable within this session's
+practical constraints): games/leaderboard/Hall of Fame, store/orders,
+promo-code redemption, certificates issuance/verification, referral
+rewards, career guidance, teacher profile, support tickets, notifications/
+announcements, parent linking/reports, and Shorts. None of these are
+untested — all have real, passing integration tests against the actual
+database — but they were not additionally driven through a real browser
+in this pass.
 
 ## External Infrastructure Required
 
@@ -366,12 +461,17 @@ the addendum at the end of this document / the session's chat summary.)_
 - `npm run build`: succeeds, all routes compile including the two newly
   added ones (`/teacher/entitlements`, and the refund UI on
   `/teacher/payments`).
-- `npx vitest run`: 237/237 passing against the real Postgres test
+- `npx vitest run`: 238/238 passing against the real Postgres test
   database (no mocks), up from 220 before this audit.
-- Five CRITICAL, several HIGH, and several MEDIUM real bugs — all
+- A real Playwright browser E2E pass: 18/18 steps passing against a live
+  `next dev` server and real database (see "E2E Findings" above).
+- Six CRITICAL, several HIGH, and several MEDIUM real bugs — all
   independently confirmed via direct code reading, not assumed from a
   report — were found and fixed, each with a regression test that fails
-  against the pre-fix code.
+  against the pre-fix code. One of the six (the `canAccessLesson`
+  `isFree` sequential-gating bypass) was found only by the E2E pass,
+  confirming the mandate's premise that business-logic tests alone are
+  not sufficient proof of correct end-to-end wiring.
 - Twelve remaining gaps are documented above with their original
   requirement, current state, precise missing work, and whether they are
   fixable in-app or genuinely require external infrastructure. None of
