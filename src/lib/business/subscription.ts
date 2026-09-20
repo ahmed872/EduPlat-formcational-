@@ -91,27 +91,35 @@ export async function startSubscriptionCheckout(
     subscriptionId: "pending", // real ref not known until the row exists; kept for interface symmetry
   });
 
-  const subscription = await prisma.subscription.create({
-    data: {
-      studentId: params.studentId,
-      planId: plan.id,
-      promoCodeId: promoIdForRecord,
-      expiresAt,
-      status: intent.status === "SUCCEEDED" ? "ACTIVE" : "PENDING_PAYMENT",
-    },
-  });
+  // Subscription + Payment are created together in one transaction: without
+  // it, a crash/exception between the two creates would leave a
+  // subscription with no payment record at all — inconsistent state with
+  // no automatic rollback.
+  const { subscription, payment } = await prisma.$transaction(async (tx) => {
+    const subscription = await tx.subscription.create({
+      data: {
+        studentId: params.studentId,
+        planId: plan.id,
+        promoCodeId: promoIdForRecord,
+        expiresAt,
+        status: intent.status === "SUCCEEDED" ? "ACTIVE" : "PENDING_PAYMENT",
+      },
+    });
 
-  const payment = await prisma.payment.create({
-    data: {
-      subscriptionId: subscription.id,
-      amountCents,
-      originalAmountCents,
-      currency: plan.currency,
-      provider: intent.provider,
-      providerRef: intent.providerRef,
-      status: intent.status,
-      verifiedAt: intent.status === "SUCCEEDED" ? new Date() : null,
-    },
+    const payment = await tx.payment.create({
+      data: {
+        subscriptionId: subscription.id,
+        amountCents,
+        originalAmountCents,
+        currency: plan.currency,
+        provider: intent.provider,
+        providerRef: intent.providerRef,
+        status: intent.status,
+        verifiedAt: intent.status === "SUCCEEDED" ? new Date() : null,
+      },
+    });
+
+    return { subscription, payment };
   });
 
   if (intent.status === "SUCCEEDED") {
