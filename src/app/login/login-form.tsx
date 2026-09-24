@@ -3,6 +3,7 @@
 import { signIn } from "next-auth/react";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { MISSING_CSRF_ERROR, signInWithCsrfRetry } from "@/lib/sign-in-with-csrf-retry";
 
 export function LoginForm() {
   const router = useRouter();
@@ -17,13 +18,19 @@ export function LoginForm() {
     setSubmitting(true);
     setError(null);
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    const result = await signInWithCsrfRetry(() =>
+      signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      }),
+    );
 
     setSubmitting(false);
+    if (result?.error === MISSING_CSRF_ERROR) {
+      setError("تعذّر التحقق من الجلسة — حدّث الصفحة ثم أعد المحاولة");
+      return;
+    }
     if (result?.error) {
       setError("البريد الإلكتروني أو كلمة المرور غير صحيحة");
       return;
