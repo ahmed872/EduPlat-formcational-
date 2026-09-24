@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { getEnrolledPublishedLessonIds } from "@/lib/business/analytics";
 
 export type ReportData = {
   totalStudySeconds: number;
@@ -21,6 +22,16 @@ export async function generateParentReport(
 ) {
   const { studentId, periodStart, periodEnd } = params;
 
+  // Scoped to the exact same "enrolled published lesson" set analytics.ts
+  // uses (see getEnrolledPublishedLessonIds) — previously this counted
+  // lessonProgress/quizAttempt rows completely unscoped (any course, any
+  // publish status), which could show a different lesson/quiz count here
+  // than on the live analytics page for the same student and period (e.g.
+  // a lesson unpublished after completion silently dropped out of
+  // analytics but not out of a generated report). This was a real,
+  // documented data-consistency gap from the final audit.
+  const enrolledLessonIds = await getEnrolledPublishedLessonIds(prisma, studentId);
+
   const [dailyStats, completedLessons, gradedAttempts, experimentAttempts] = await Promise.all([
     prisma.dailyStudyStat.findMany({
       where: { studentId, date: { gte: periodStart, lte: periodEnd } },
@@ -30,6 +41,7 @@ export async function generateParentReport(
         studentId,
         status: "COMPLETED",
         completedAt: { gte: periodStart, lte: periodEnd },
+        lessonId: { in: enrolledLessonIds },
       },
     }),
     prisma.quizAttempt.findMany({
@@ -37,6 +49,7 @@ export async function generateParentReport(
         studentId,
         status: "GRADED",
         submittedAt: { gte: periodStart, lte: periodEnd },
+        quiz: { lessonId: { in: enrolledLessonIds } },
       },
     }),
     prisma.experimentAttempt.count({

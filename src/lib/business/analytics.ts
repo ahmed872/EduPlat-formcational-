@@ -64,30 +64,34 @@ export async function getStudentCourseAnalytics(
   return { courseId: course.id, courseTitle: course.title, ...stats };
 }
 
-export async function getStudentOverallAnalytics(
+/**
+ * The single definition of "which courses count as this student's" used
+ * across analytics — an Entitlement (paid/promo/admin-granted) OR a
+ * WatchSession (a free lesson never gets an Entitlement row, per
+ * checkVideoAccess's FREE_VIDEO bypass, so a student who only ever watched
+ * free content would otherwise vanish from their own analytics entirely).
+ * `reports.ts` reuses this same definition (via `getEnrolledPublishedLessonIds`
+ * below) so a live analytics page and a generated parent report never
+ * disagree on the same student's numbers for an overlapping period — this
+ * was a real, documented gap (divergent, independently-maintained scoping)
+ * before this fix.
+ */
+export async function getEnrolledCourseIdsForStudent(
   prisma: PrismaClient,
   studentId: string,
-) {
-  const [entitlements, watchSessions, dailyStats, experimentAttempts] = await Promise.all([
+): Promise<string[]> {
+  const [entitlements, watchSessions] = await Promise.all([
     prisma.entitlement.findMany({
       where: { studentId, revokedAt: null, lessonId: { not: null } },
       include: { lesson: { include: { course: true } } },
     }),
-    // A free lesson never gets an Entitlement row (see checkVideoAccess's
-    // FREE_VIDEO bypass), so a student who only ever watched free content
-    // would otherwise vanish from their own analytics entirely — watch
-    // history is the other real signal that a course is "theirs".
     prisma.watchSession.findMany({
       where: { studentId },
       include: { video: { include: { lesson: true } } },
     }),
-    prisma.dailyStudyStat.findMany({ where: { studentId } }),
-    prisma.experimentAttempt.count({
-      where: { studentId, completedAt: { not: null } },
-    }),
   ]);
 
-  const courseIds = Array.from(
+  return Array.from(
     new Set(
       [
         ...entitlements.map((e) => e.lesson?.courseId),
@@ -95,6 +99,39 @@ export async function getStudentOverallAnalytics(
       ].filter((id): id is string => Boolean(id)),
     ),
   );
+}
+
+/**
+ * The published lessons, across every course this student is enrolled in
+ * (see `getEnrolledCourseIdsForStudent`), that analytics counts progress
+ * against. `reports.ts` scopes its lesson-completion/quiz-count metrics to
+ * this exact same set.
+ */
+export async function getEnrolledPublishedLessonIds(
+  prisma: PrismaClient,
+  studentId: string,
+): Promise<string[]> {
+  const courseIds = await getEnrolledCourseIdsForStudent(prisma, studentId);
+  if (courseIds.length === 0) return [];
+
+  const lessons = await prisma.lesson.findMany({
+    where: { courseId: { in: courseIds }, status: "PUBLISHED" },
+    select: { id: true },
+  });
+  return lessons.map((l) => l.id);
+}
+
+export async function getStudentOverallAnalytics(
+  prisma: PrismaClient,
+  studentId: string,
+) {
+  const [courseIds, dailyStats, experimentAttempts] = await Promise.all([
+    getEnrolledCourseIdsForStudent(prisma, studentId),
+    prisma.dailyStudyStat.findMany({ where: { studentId } }),
+    prisma.experimentAttempt.count({
+      where: { studentId, completedAt: { not: null } },
+    }),
+  ]);
 
   const courses = await Promise.all(
     courseIds.map((courseId) => getStudentCourseAnalytics(prisma, { studentId, courseId })),
