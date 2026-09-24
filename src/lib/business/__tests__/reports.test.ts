@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createLesson, createStudent } from "@/test/factories";
+import { createLesson, createParent, createStudent, createTeacher } from "@/test/factories";
 import { createQuiz } from "@/test/factories-quiz";
 import { getStudentOverallAnalytics } from "@/lib/business/analytics";
 import {
   addTeacherCommentToReport,
   generateParentReport,
+  getReportForViewer,
   getReportsForStudent,
 } from "@/lib/business/reports";
+import { ForbiddenError } from "@/lib/rbac";
 
 beforeEach(async () => {
   await resetDatabase();
@@ -232,5 +234,120 @@ describe("addTeacherCommentToReport", () => {
     });
 
     expect(updated.teacherComments).toBe("أداء ممتاز هذا الشهر");
+  });
+});
+
+describe("getReportForViewer (report preview / PDF authorization)", () => {
+  async function setup() {
+    const student = await createStudent();
+    const report = await generateParentReport(prisma, {
+      studentId: student.id,
+      periodStart: JAN.start,
+      periodEnd: JAN.end,
+    });
+    const parent = await createParent();
+    await prisma.parentStudent.create({
+      data: { parentId: parent.id, studentId: student.id, approvedAt: new Date() },
+    });
+    return { student, report, parent };
+  }
+
+  it("lets an approved linked parent open their child's report", async () => {
+    const { student, report, parent } = await setup();
+    const found = await getReportForViewer(prisma, {
+      reportId: report.id,
+      studentId: student.id,
+      viewer: { userId: parent.userId, role: "PARENT" },
+    });
+    expect(found.id).toBe(report.id);
+    expect(found.student.user.name).toBe("Test Student");
+  });
+
+  it("refuses an unlinked parent", async () => {
+    const { student, report } = await setup();
+    const stranger = await createParent();
+    await expect(
+      getReportForViewer(prisma, {
+        reportId: report.id,
+        studentId: student.id,
+        viewer: { userId: stranger.userId, role: "PARENT" },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("refuses a parent whose link is not approved yet", async () => {
+    const { student, report } = await setup();
+    const pending = await createParent();
+    await prisma.parentStudent.create({ data: { parentId: pending.id, studentId: student.id } });
+    await expect(
+      getReportForViewer(prisma, {
+        reportId: report.id,
+        studentId: student.id,
+        viewer: { userId: pending.userId, role: "PARENT" },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("refuses another student's report id placed under the parent's own child URL", async () => {
+    const { student, parent } = await setup();
+    const otherStudent = await createStudent();
+    const otherReport = await generateParentReport(prisma, {
+      studentId: otherStudent.id,
+      periodStart: JAN.start,
+      periodEnd: JAN.end,
+    });
+    await expect(
+      getReportForViewer(prisma, {
+        reportId: otherReport.id,
+        studentId: student.id,
+        viewer: { userId: parent.userId, role: "PARENT" },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    // …and under the other student's URL, the missing link refuses it too.
+    await expect(
+      getReportForViewer(prisma, {
+        reportId: otherReport.id,
+        studentId: otherStudent.id,
+        viewer: { userId: parent.userId, role: "PARENT" },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("lets a teacher open any report", async () => {
+    const { report } = await setup();
+    const teacher = await createTeacher();
+    const found = await getReportForViewer(prisma, {
+      reportId: report.id,
+      viewer: { userId: teacher.id, role: "TEACHER_ADMIN" },
+    });
+    expect(found.id).toBe(report.id);
+  });
+
+  it("refuses students (including the report's own student) and unknown roles", async () => {
+    const { student, report } = await setup();
+    for (const role of ["STUDENT", "SOMETHING"]) {
+      await expect(
+        getReportForViewer(prisma, {
+          reportId: report.id,
+          studentId: student.id,
+          viewer: { userId: student.userId, role },
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+    }
+  });
+
+  it("returns the same refusal for a missing report as for a forbidden one", async () => {
+    const { student, parent } = await setup();
+    await expect(
+      getReportForViewer(prisma, {
+        reportId: "missing",
+        studentId: student.id,
+        viewer: { userId: parent.userId, role: "PARENT" },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    const teacher = await createTeacher();
+    await expect(
+      getReportForViewer(prisma, { reportId: "missing", viewer: { userId: teacher.id, role: "TEACHER_ADMIN" } }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
   });
 });

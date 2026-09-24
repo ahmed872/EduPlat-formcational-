@@ -52,10 +52,19 @@ export default async function ParentStudentReportsPage({
           const data = report.dataJson as ReportData;
           return (
             <div key={report.id} className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-xs text-gray-500">
-                {report.periodStart.toLocaleDateString("ar-EG")} —{" "}
-                {report.periodEnd.toLocaleDateString("ar-EG")}
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-500">
+                  {report.periodStart.toLocaleDateString("ar-EG")} —{" "}
+                  {report.periodEnd.toLocaleDateString("ar-EG")}
+                </p>
+                <Link
+                  href={`/parent/students/${studentId}/reports/${report.id}`}
+                  data-report-link={report.id}
+                  className="text-xs text-indigo-600 hover:underline"
+                >
+                  معاينة / تنزيل PDF
+                </Link>
+              </div>
               <div className="mt-2 grid grid-cols-2 gap-3 text-sm text-gray-600 md:grid-cols-4">
                 <p>وقت المذاكرة: {formatHours(data.totalStudySeconds)}</p>
                 <p>دروس مكتملة: {data.lessonsCompleted}</p>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { createReport, addComment } from "./actions";
 import type { ReportData } from "@/lib/business/reports";
@@ -82,7 +83,16 @@ export default async function TeacherReportsPage() {
           return (
             <div key={report.id} className="rounded-lg border border-gray-200 bg-white p-4">
               <div className="flex items-center justify-between">
-                <p className="font-semibold">{report.student.user.name}</p>
+                <p className="font-semibold">
+                  {report.student.user.name}{" "}
+                  <Link
+                    href={`/teacher/reports/${report.id}`}
+                    data-report-link={report.id}
+                    className="ms-2 text-xs font-normal text-indigo-600 hover:underline"
+                  >
+                    معاينة / تنزيل PDF
+                  </Link>
+                </p>
                 <p className="text-xs text-gray-500">
                   {report.periodStart.toLocaleDateString("ar-EG")} —{" "}
                   {report.periodEnd.toLocaleDateString("ar-EG")}

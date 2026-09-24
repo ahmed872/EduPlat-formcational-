@@ -24,3 +24,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Printable pages (report PDF, certificates): the browser's print engine
+   produces the PDF, so Arabic shaping and RTL are the same as on screen. */
+@page {
+  size: A4;
+  margin: 14mm;
+}
+
+@media print {
+  :root {
+    --background: #ffffff;
+    --foreground: #111111;
+  }
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .print-avoid-break {
+    break-inside: avoid;
+  }
+}

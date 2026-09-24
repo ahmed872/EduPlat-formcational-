@@ -1,5 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { getEnrolledPublishedLessonIds } from "@/lib/business/analytics";
+import { assertParentCanAccessStudent } from "@/lib/business/parent-access";
+import { ForbiddenError } from "@/lib/rbac";
 
 export type ReportData = {
   totalStudySeconds: number;
@@ -100,4 +102,39 @@ export async function addTeacherCommentToReport(
     where: { id: params.reportId },
     data: { teacherComments: params.comment },
   });
+}
+
+/**
+ * The single authorization gate for viewing / printing one report (the
+ * printable page whose browser "Save as PDF" is the report PDF):
+ *   - TEACHER_ADMIN: any report.
+ *   - PARENT: only reports of a student they have an APPROVED link to, and
+ *     only under that student's URL (a report id from another student in
+ *     the same URL is refused, not silently shown).
+ *   - anyone else: refused.
+ * Refusals throw ForbiddenError; pages turn that into a 404 so report ids
+ * can't be probed.
+ */
+export async function getReportForViewer(
+  prisma: PrismaClient,
+  params: { reportId: string; viewer: { userId: string; role: string }; studentId?: string },
+) {
+  const report = await prisma.parentReport.findUnique({
+    where: { id: params.reportId },
+    include: { student: { include: { user: { select: { name: true } } } } },
+  });
+
+  if (params.viewer.role === "TEACHER_ADMIN") {
+    if (!report) throw new ForbiddenError("Report not found");
+    return report;
+  }
+  if (params.viewer.role !== "PARENT") throw new ForbiddenError("Not allowed to view reports");
+  if (!report || (params.studentId !== undefined && report.studentId !== params.studentId)) {
+    throw new ForbiddenError("Report not found");
+  }
+  await assertParentCanAccessStudent(prisma, {
+    parentUserId: params.viewer.userId,
+    studentProfileId: report.studentId,
+  });
+  return report;
 }
