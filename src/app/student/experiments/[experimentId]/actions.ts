@@ -32,18 +32,17 @@ export async function startAttempt(experimentId: string) {
   revalidatePath(`/student/experiments/${experimentId}`);
 }
 
-export async function submitAttempt(experimentId: string, attemptId: string, submission: unknown) {
+// submitAttempt / playMove deliberately don't revalidate the page: that
+// would re-render it mid-interaction and unmount the result the student is
+// looking at. The client refreshes itself once the student moves on
+// (use-submit.tsx on a pass, the mini game's "continue" button).
+// experimentId stays in the signature so the page's action calls are uniform.
+export async function submitAttempt(_experimentId: string, attemptId: string, submission: unknown) {
   const id = await studentId();
-  const result = await attempt(() =>
-    submitExperimentAttempt(prisma, { attemptId, studentId: id, submission }),
-  );
-  revalidatePath(`/student/experiments/${experimentId}`);
-  return result;
+  return attempt(() => submitExperimentAttempt(prisma, { attemptId, studentId: id, submission }));
 }
 
-export async function playMove(experimentId: string, attemptId: string, move: unknown) {
+export async function playMove(_experimentId: string, attemptId: string, move: unknown) {
   const id = await studentId();
-  const result = await attempt(() => playExperimentMove(prisma, { attemptId, studentId: id, move }));
-  if (result.ok && result.value.finished) revalidatePath(`/student/experiments/${experimentId}`);
-  return result;
+  return attempt(() => playExperimentMove(prisma, { attemptId, studentId: id, move }));
 }

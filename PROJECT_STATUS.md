@@ -1,13 +1,15 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-20 (Final Full-System Audit session)
+Last updated: 2026-09-25 (MUST FIX / SHOULD FIX round)
 
 ## Current phase
 
 A full independent audit and hardening pass has been completed on top of
 all 21 originally-enumerated phases, followed by an approved gap-closure
-round that closed seven of its twelve remaining gaps. See "Final
-full-system audit" and "Gap-closure round" below, and
+round that closed seven of its twelve remaining gaps, and a MUST FIX /
+SHOULD FIX round (content status, interactive experiments, lesson
+attachments, certificate QR, report PDF, real FKs). See "Final full-system
+audit", "Gap-closure round" and "MUST FIX / SHOULD FIX round" below, and
 `FINAL_AUDIT_REPORT.md`, for the complete Requirement Coverage Matrix,
 findings, and what remains open. Phase 21 (Advanced Security) itself
 completed the originally-enumerated 21-phase plan. It builds on Phase 20 (Search),
@@ -306,6 +308,10 @@ and `src/app/api/stream/__tests__/*.test.ts`.
   `DRAG_AND_DROP`, `MINI_GAME`, `INTERACTIVE`), set its title, order
   (implicitly by creation order), and whether it's required or optional
   for progressing past the lesson; delete an experiment.
+- *(Superseded 2026-09-25 — experiments now use a per-type registry with
+  server-side grading; see "MUST FIX / SHOULD FIX round". The text below
+  describes the original Phase 7 runner, which still serves legacy
+  step-list experiments.)*
 - **Generic interactive runner** (`/student/experiments/[experimentId]`):
   since no simulation/game engine or content-authoring pipeline is
   available in this environment, every experiment type shares one honest,
@@ -445,7 +451,9 @@ and `src/app/api/stream/__tests__/*.test.ts`.
 - **Parent page** (`/parent/students/[studentId]/reports`): read-only,
   gated by `assertParentCanAccessStudent()` — an unrelated or unapproved
   parent gets a 404, exactly like the Phase 9 analytics page.
-- **No PDF generation.** `ParentReport.pdfUrl` exists in the schema but is
+- *(Superseded 2026-09-25 — reports now have a printable preview with a
+  Download/Print-to-PDF flow; see "MUST FIX / SHOULD FIX round".)*
+  **No PDF generation.** `ParentReport.pdfUrl` exists in the schema but is
   never populated — there is no PDF-rendering pipeline available in this
   environment (the same category of honest gap as no `ffprobe`, no
   HLS/DRM pipeline). The report is a real, structured data snapshot
@@ -1150,6 +1158,74 @@ against the pre-fix code.
   fix applies.
 - Tests: 277/277. E2E: 26/26 main suite plus 5/5 login/CSRF.
 
+### MUST FIX / SHOULD FIX round (2026-09-25)
+
+**MF#1 — Publish / Unpublish / Archive** (course, lesson, video)
+- The teacher `StatusControls` on the course page set any of the three
+  states per item. The effective state is computed over video → lesson →
+  course (`content-visibility.ts`).
+- **Unpublished (`DRAFT`)** is hidden from everyone. This includes
+  existing entitlement holders, whose entitlements are left untouched.
+  It is hidden from dashboards, search, video, quiz, experiment and
+  attachment pages, and from the stream, notes, bookmarks and heartbeat
+  APIs. The unavailable page doesn't reveal the title.
+- **Archived** content stays usable by existing holders only. It is never
+  listed or searchable, never free, and never granted again.
+- Subscriptions and promo grants snapshot only published lessons. Before,
+  they also snapshotted drafts, which then leaked to old buyers when
+  published.
+
+**MF#2 — Interactive experiments** (`src/lib/experiments/`)
+- A type registry: each type has a config schema, a teacher editor
+  (`experiment-editor.tsx`), a student renderer (`renderers/*`) and
+  server-side grading. The four types are drag & drop, ordering, a timed
+  mini game (lives, streaks, server-side moves and clock) and a
+  formula-explorer simulation (sliders, safe evaluator, SVG plot, target
+  band).
+- The answer key never reaches the browser.
+- `start` / `submit` / `move` each check role, entitlement, publication,
+  prerequisite and ownership. `[]` and partial submissions are rejected.
+- EXERCISE study time is sent only while the tab is visible and the
+  student is interacting, and credited only during a live attempt.
+
+**MF#3 — Lesson attachments**
+- Teacher upload and delete (PDF, PNG, JPG, DOCX, PPTX; magic bytes must
+  match the extension; 25 MB limit), stored privately.
+- Students get 10-minute signed links bound to them and the attachment.
+  The route re-checks lesson access on every request.
+
+**MF#4 — Certificate QR**
+- A real QR code from the local `qrcode` library, encoding only the
+  public verify URL.
+- Printable certificate page for the owner.
+- The public page shows valid / revoked / not found, and malformed codes
+  are rejected before any lookup.
+- Teacher revoke and restore are audit-logged, and the reason is never
+  shown publicly.
+
+**MF#5 — Report PDF**
+- Printable report preview for linked parents and teachers, with a
+  Download / Print-to-PDF button. The browser print engine produces
+  correctly shaped Arabic RTL, and no external service is used.
+- One authorization gate, `getReportForViewer`, is covered by tests.
+
+**SHOULD FIX**
+- Real FKs, all `ON DELETE RESTRICT`, for the 7 User relations.
+- Entitlement `lessonId` / `videoId` use RESTRICT.
+- `ReferralReward.rewardType` is an enum and `rewardValue` an Int.
+- Every migration carries an abort-before-DDL preflight. `PromoCode.value`
+  is unchanged.
+
+**Found and fixed along the way**
+- Paid lesson quizzes could be started without an entitlement.
+- Notes and bookmarks accepted any `videoId`.
+- The formula parser accepted `constructor()` via the prototype chain.
+- The mini game's result screen was unmounted by a server revalidation
+  (caught by E2E).
+
+**Deployment note:** `next start` needs `AUTH_TRUST_HOST=true` (or
+`AUTH_URL`). It is documented in `.env.example` and SECURITY.md.
+
 ## Not started (by priority order, all schema-ready)
 
 Real payment gateway integration, concurrent-session detection, HLS/DRM.
@@ -1187,7 +1263,10 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 9. **No conflict detection between overlapping exam schedules** — a
    teacher can create two exams with overlapping `availableFrom`/
    `availableTo` windows with no warning.
-10. **No real simulation/game engine for experiments.** `SIMULATION`,
+10. ~~**No real simulation/game engine for experiments.**~~ **Closed
+    2026-09-25**: drag & drop, ordering activity, mini game and formula
+    simulation each have their own renderer and server-side grading.
+    Original note: `SIMULATION`,
     `DRAG_AND_DROP`, and `MINI_GAME` experiment types share the same
     generic runner as `INTERACTIVE` (instructions + checklist + optional
     external link) — there is no content-authoring pipeline or game
@@ -1220,7 +1299,9 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
     would run `generateParentReport()` from a monthly cron job; nothing
     in this environment can run one, so a teacher generates each report
     by hand for now (see the same note on `syncExpiredSubscriptions()`).
-17. **No PDF export.** `ParentReport.pdfUrl` exists in the schema and is
+17. ~~**No PDF export.**~~ **Closed 2026-09-25** (printable report +
+    browser Save-as-PDF; `pdfUrl` stays unused because nothing is stored
+    server-side). Original note: `ParentReport.pdfUrl` exists in the schema and is
     always `null` — the report is a real data snapshot rendered as an
     HTML page, not a downloadable file, since no PDF-rendering pipeline
     is available here.
@@ -1272,7 +1353,8 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
     referral reward** — see the "Honest, documented gap" note in the
     Certificates & Referral section above; the reward stays pending
     rather than fabricating an entitlement.
-28. **No certificate PDF/image generation** — `/certificates/verify/[code]`
+28. ~~**No certificate PDF/image generation**~~ **Closed 2026-09-25**
+    (printable certificate page with a QR code). Original note: — `/certificates/verify/[code]`
     is a real, permanent, publicly verifiable HTML record, but there is
     no downloadable certificate document (same category of gap as
     Phase 10's report PDF export — no rendering pipeline available here).
@@ -1325,7 +1407,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 277/277 passing (30 files)
+npx vitest run       # 417/417 passing (35 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1365,15 +1447,21 @@ ones → global search finds the new course → achievements page loads.
 Full narrative and the one real bug this pass caught are in
 `FINAL_AUDIT_REPORT.md`'s "E2E Findings" section.
 
+Browser E2E (Playwright, production build via `next start`, dev
+database), 2026-09-25 round:
+- MUST FIX suite: 32/32 steps passing, covering MF#1–#5 and the SHOULD FIX schema
+  work, including direct API / server-action replay negatives.
+- Original targeted suite: 26/26.
+- Fresh-browser CSRF login suite: 5/5.
+
 ## Next recommended step
 
 All 21 phases, the full audit, and the approved gap-closure round are
 complete. No further work is queued. What remains open, and what each
 item needs before it can move:
-1. **Product decisions:** gap #8 (Entitlement delete behavior), the
-   `onDelete` behavior for gap #9's FKs, and whether promo percentages may
-   be fractional (gap #10).
-2. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron,
-   PDF generation, and CAPTCHA.
+1. **Product decision:** whether promo percentages may be fractional
+   (`PromoCode.value`, intentionally unchanged).
+2. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron, and
+   CAPTCHA (PDF is handled in-app by the browser print flow).
 3. **Architectural change:** concurrent-session detection, which would
    mean moving off JWT sessions.

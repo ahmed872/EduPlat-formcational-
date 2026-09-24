@@ -4,6 +4,10 @@
 
 - Passwords hashed with bcrypt (cost 12), never stored or logged in plain
   text.
+- Self-hosted production (`next start`) must set `AUTH_TRUST_HOST=true`
+  (or `AUTH_URL`) so Auth.js accepts the deployment's host; without it,
+  every auth request fails with `UntrustedHost`. `next dev` trusts the
+  host automatically.
 - Sessions are JWT-based (NextAuth v5). `AUTH_SECRET` must be a strong random
   value in production — `.env.example` ships a placeholder only.
 - Blocked users (`User.status = BLOCKED`) are rejected at the `authorize()`
@@ -91,6 +95,96 @@ interpolates table names read back from `pg_tables`, never user input.
   an unbreakable guarantee; a sufficiently motivated viewer can always
   screen-record what their own device is legitimately allowed to display,
   and no software-only scheme changes that.
+
+## Content status (publish / unpublish / archive)
+
+`checkVideoAccess`, `checkLessonAvailability` and `assertStudentCanUseLesson`
+(`src/lib/business/content-visibility.ts`) compute one effective state over
+video → lesson → course and are called by every student-facing surface:
+pages, the stream route, notes/bookmarks APIs, the heartbeat, quiz start,
+experiment start/submit/move, and attachment listing and download. `DRAFT`
+anywhere is refused to everyone, including existing entitlement holders,
+without touching their entitlements, and the page does not reveal the title.
+`ARCHIVED` keeps working for existing holders only: it is not listed, not
+searchable, not free, and can't be granted again. Subscriptions snapshot
+only published lessons, so content published later never reaches an older
+subscription.
+
+## Lesson attachments
+
+- Files are stored in private storage (`storage/attachments/`, outside
+  `public/`) under a random server-generated key. The uploaded file name is
+  display metadata only; its directory parts and control characters are
+  stripped, and it never becomes a path. The storage layer also rejects
+  any key containing `..`, a slash, a backslash or NUL, or one that
+  resolves outside its root.
+- The type is detected from magic bytes and must match the extension
+  (PDF, PNG, JPG, DOCX, PPTX, up to 25 MB); the browser's MIME type is
+  ignored.
+- Students download via `/api/attachments/[id]?token=…`. The token is
+  HMAC-signed, valid for 10 minutes, domain-separated from video playback
+  tokens, and bound to the student and the attachment. On every request
+  the route requires a live session matching the token, re-derives the
+  lesson from the database, and re-runs the full lesson access check. An
+  edited id, a copied link, a revoked entitlement or an unpublished lesson
+  is refused.
+- Responses are forced downloads (`Content-Disposition: attachment` with
+  an RFC 5987 file name) with `nosniff`, `Content-Security-Policy:
+  sandbox` and `Cache-Control: private, no-store`, so an uploaded file
+  cannot run as a page on this origin. Teachers download with their
+  session.
+
+## Interactive experiments
+
+- The stored config, including the answer key, never reaches the browser.
+  Pages receive only `toPublicExperiment()`: item lists are shuffled with
+  their categories and order removed, and mini-game questions have no
+  correct index. A mini-game move answers only "right/wrong", never which
+  choice was correct.
+- `startAttempt` / `submitAttempt` / `playMove` each re-check the session
+  role, lesson availability (entitlement + publication + prerequisite) and
+  attempt ownership on the server. "Not found" and "someone else's
+  attempt" return the same error. Completion only comes from a passing
+  server-side grade. Empty, partial, duplicate, out-of-range and
+  off-step submissions are rejected, and closing an attempt is an atomic
+  conditional update.
+- Simulation formulas use a small parser and evaluator (no
+  `eval`/`Function`). Only numbers, the declared variables, arithmetic
+  operators and a fixed whitelist of math functions are allowed; lookups
+  use own properties only, so names like `constructor(…)` are rejected.
+- The mini-game clock is the attempt's server-side `startedAt`. Answers
+  after the limit plus a 10-second grace are ignored, and answers must
+  arrive in order. Concurrent moves are serialized with an
+  optimistic-concurrency guard.
+- EXERCISE study time: the client sends a heartbeat only while the tab is
+  visible and the student interacted in the last 30 s. The server credits
+  it only during a live attempt of an accessible lesson (at most 2 hours,
+  or the mini game's round time). A script calling the heartbeat directly
+  therefore cannot earn time for an exercise that isn't in progress.
+
+## Certificates
+
+The public verification page (`/certificates/verify/[code]`, no login,
+`noindex`) validates the code format before any lookup and matches only
+the exact code. Codes have about 50 bits of randomness, so they can't be
+enumerated, and nothing else in the URL is trusted. Internal ids are never
+accepted and never shown. The page reports valid, revoked or not found;
+the teacher's revocation reason stays private. The QR code is generated
+locally with the `qrcode` library and encodes only that public URL, built
+from the configured origin (`APP_BASE_URL` / `AUTH_URL` / `NEXTAUTH_URL`),
+never from the request's `Host` header. Revoke and restore are
+teacher-only and audit-logged.
+
+## Reports (preview / PDF)
+
+The report preview is the printable document. The browser's print dialog
+("Save as PDF") produces the PDF locally, and no external service
+receives report data. `getReportForViewer` is the only gate:
+- A teacher may open any report.
+- A parent may open only reports of a student with an approved link, and
+  only under that student's URL.
+- Anyone else is refused.
+Refusals return 404.
 
 ## Payments
 

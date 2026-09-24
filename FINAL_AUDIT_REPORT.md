@@ -66,6 +66,36 @@ gaps. E2E also surfaced one new, rare, third-party login issue
 (Auth.js `MissingCSRF` race), documented under Remaining Gaps and not
 fixed, because it is outside the approved scope.
 
+**MUST FIX / SHOULD FIX round (2026-09-25).**
+- **Implemented:** content Publish/Unpublish/Archive (#47); a real
+  interactive-experiment registry with server-side grading (#23, was
+  PARTIAL); EXERCISE study-time protection (#13); protected lesson
+  attachments (#48); certificate QR verification with revocation (#38);
+  report preview + PDF (#27).
+- **Correction:** row #38 previously said COMPLETE although no QR code
+  existed. It was PARTIAL until this round.
+- **Schema (SHOULD FIX):**
+  - Real FKs for the 7 User relations and Entitlement RESTRICT (gaps #8
+    and #9).
+  - Typed referral columns (gap #10).
+  - Every migration aborts before any DDL if the data would be orphaned
+    or lose values.
+- **Bugs found and fixed along the way:**
+  - Subscriptions snapshotted DRAFT lessons, which leaked to old buyers
+    once published.
+  - Paid lesson quizzes could be started without an entitlement.
+  - The notes and bookmarks APIs accepted any video.
+  - The formula parser accepted prototype names.
+  - The mini game's result screen was unmounted by a server revalidation
+    (found by E2E).
+- **Validation:**
+  - `npx tsc --noEmit` and `npx eslint .` are clean, and
+    `npm run build` succeeds.
+  - Unit/integration tests: 417/417 (from 277).
+  - A new 32-step Playwright suite, run against a production build
+    (`next start`), passes 32/32. It includes direct API and
+    server-action replay negatives, not just UI clicks.
+
 ## Requirements Coverage
 
 Legend: **COMPLETE** = implementation + runtime wiring + authorization +
@@ -84,12 +114,12 @@ service would plug in.
 | 5 | Audit log for sensitive actions (payments, blocking) | COMPLETE | `src/app/teacher/audit-log/page.tsx` | Yes | Yes | — |
 | 6 | Dynamic category/course/lesson hierarchy (no hardcoded stages) | COMPLETE | `Category` is self-referential in schema; teacher CRUD confirmed generic | Yes (Foundation-era) | — | — |
 | 7 | Subscription/payment state machine, no fake payment success | COMPLETE | `src/lib/business/subscription.ts` | Yes | Yes | — |
-| 8 | Future-published content does not leak into an existing subscription | COMPLETE (by design, verified) | `grantEntitlementsForSubscription` snapshots at purchase time; new `grantLessonToCourseSubscribers` batch grant (gap #1, closed) | Yes | Yes (batch grant + audit log) | — |
+| 8 | Future-published content does not leak into an existing subscription | COMPLETE (tightened in MF round) | `grantEntitlementsForSubscription` / promo grants snapshot only `PUBLISHED_LESSON_WHERE` lessons at purchase time (they previously also snapshotted DRAFT lessons, which then leaked to old buyers when published); `grantLessonToCourseSubscribers` batch grant is the explicit teacher-driven path | Yes (`content-visibility.test.ts`) | Yes (batch grant + audit log) | — |
 | 9 | Manual/offline payment confirm + **refund** | COMPLETE (refund UI was dead, now wired) | `src/lib/business/subscription.ts` (`refundPayment`), `src/app/teacher/payments/page.tsx` | Yes | Yes | — |
 | 10 | Admin one-off entitlement grant (bonus lesson after purchase window) | COMPLETE (was dead, now wired) | `src/lib/business/video-access.ts` (`grantAdminEntitlement`), new `src/app/teacher/entitlements/page.tsx` | Yes | Yes | — |
 | 11 | Private video storage, signed/expiring playback URL, per-request re-authorization, **session binding** | COMPLETE (session binding fixed in gap round — gap #2) | `src/app/api/stream/[videoId]/route.ts` (session must match token's studentId, unconditionally) | Yes (no-cookie / other-student / blocked → 403) | Yes | — |
 | 12 | **Three-view rule**, server-authoritative, cannot be bypassed via direct API | COMPLETE (fixed this audit — was CRITICAL) | `src/lib/business/video-access.ts` (`updateWatchProgress` now atomically re-checks the limit at consumption time) | Yes, incl. a real concurrency regression test | — | — |
-| 13 | Actual (not just opened-page) study-time tracking, heartbeat abuse resistance | COMPLETE (fixed this audit) | `src/lib/business/study-time.ts` (`assertHeartbeatTargetIsReal`, optimistic-concurrency update) | Yes, incl. concurrency test | — | — |
+| 13 | Actual (not just opened-page) study-time tracking, heartbeat abuse resistance — VIDEO and EXERCISE | COMPLETE (EXERCISE side added in MF round) | `src/lib/business/study-time.ts` (`assertHeartbeatTargetIsReal`: EXERCISE requires lesson availability + a live attempt ≤2 h / within the mini-game round); `experiment-runner.tsx` sends only while visible + interacted in the last 30 s | Yes (8 EXERCISE tests incl. other-student, expired, unpublished) | Yes (direct-API negatives; idle / active / hidden-tab client behavior) | — |
 | 14 | HLS/DASH/DRM/CDN/transcoding | NOT IMPLEMENTED | — | — | — | Genuinely requires external media infrastructure; no video-piracy-protection is or was claimed to be 100% effective, matching SECURITY.md |
 | 15 | Shorts (public, free, linked to source video+timestamp) | COMPLETE | `src/lib/business/shorts.ts` | Yes | — | — |
 | 16 | Sequential lesson gating (video → required experiments → quiz → next lesson), server-side | COMPLETE (fixed this audit — was CRITICAL, twice) | `src/lib/business/quiz.ts` (`startQuizAttempt` now calls `canAccessLesson`; `canAccessLesson` itself fixed again after E2E caught `isFree` bypassing the prerequisite gate entirely) | Yes | Yes | — |
@@ -99,11 +129,11 @@ service would plug in.
 | 20 | Manual grading, correctness, point bounds | COMPLETE (bound-clamp fixed this audit) | `src/lib/business/quiz.ts` (`gradeManualAnswer`) | Yes | — | — |
 | 21 | Answer-coverage integrity (cannot omit hard questions to inflate score) | COMPLETE (fixed this audit — was CRITICAL) | `src/lib/business/quiz.ts` (`submitQuizAttempt` requires full coverage) | Yes | — | — |
 | 22 | Quiz attempt-limit cannot be bypassed by abandoning attempts | COMPLETE (fixed this audit) | `src/lib/business/quiz.ts` (only one IN_PROGRESS attempt at a time, auto-expiry) | Yes | — | — |
-| 23 | Interactive experiments (simulation/instructions/steps/required-optional) | PARTIAL | `src/lib/business/experiment.ts`, `Experiment.config` (JSON) | Yes | — | Current implementation is instructions+steps+an optional external link, not a built-in simulation/drag-drop engine — this was true before this audit and remains an honestly scoped gap (would need a real interactive-content engine/library), not a hidden defect |
+| 23 | Interactive experiments: extensible type registry — drag & drop, interactive activity (ordering), mini game, template simulation — each with config schema, teacher editor, student renderer, server-side grading | COMPLETE (MF round; was PARTIAL) | `src/lib/experiments/definitions.ts` (registry, `toPublicExperiment`, `gradeSubmission`, `applyMiniGameMove`), `expression.ts` (safe evaluator), `src/lib/business/experiment.ts` (auth + entitlement + publication + prerequisite + ownership on start/submit/move), teacher `experiment-editor.tsx`, `renderers/*` | Yes (37 business + 29 registry unit tests: `[]`/partial/foreign attempt/out-of-range/late/concurrent moves, answer key never in the public view) | Yes (all four types played in the browser; direct server-action replays rejected; answer key absent from HTML) | Legacy step-list experiments still run (require every step) and are labelled as legacy in the editor |
 | 24 | Student/course/teacher analytics, correct enrollment definition (incl. free content) | COMPLETE | `src/lib/business/analytics.ts` (`getEnrolledCourseIdsForStudent` / `getEnrolledPublishedLessonIds`, now shared with reports) | Yes | — | — |
 | 25 | Parent-student linking (request/approve/reject), **revoke** | COMPLETE (revoke was missing, now added this audit) | `src/lib/business/parent-link.ts`, new "إلغاء الربط" button on `/student/parent-requests` | Yes | Yes | — |
 | 26 | Parent access strictly scoped to approved links, never to paid content | COMPLETE | `src/lib/business/parent-access.ts`, verified no bypass across 3+ consumers | Yes | Yes | — |
-| 27 | Parent reports (study time/tests/lessons/experiments), real snapshot data, consistent with analytics | COMPLETE (scoping aligned in gap round — gap #4) | `src/lib/business/reports.ts` | Yes (incl. report == analytics cross-check) | — | — |
+| 27 | Parent reports (study time/tests/lessons/experiments), real snapshot data, consistent with analytics — with preview + PDF download | COMPLETE (PDF flow added in MF round) | `src/lib/business/reports.ts` (`getReportForViewer` gate), printable `/parent/students/[id]/reports/[reportId]` and `/teacher/reports/[reportId]` with Download/Print-to-PDF (browser print engine, A4 print CSS) | Yes (incl. report == analytics cross-check; 7 authorization tests) | Yes (PDF produced and its text checked for shaped Arabic, the student and no app chrome; unlinked parent / wrong-student URL / student / anonymous refused) | Automatic scheduled generation — see #28 |
 | 28 | Reports manual vs. automatic (spec allowed either; scheduler unavailable) | PARTIAL, honestly | `src/app/teacher/reports/actions.ts` | Yes | — | 100% teacher-triggered; no cron/scheduler exists in this environment (documented, not hidden) |
 | 29 | Promo codes (percent/fixed/100%/free lesson/package/period), abuse resistance | COMPLETE (usage-limit race fixed this audit) | `src/lib/business/promo-code.ts` | Yes, incl. concurrency test | — | — |
 | 30 | Marketing banners | COMPLETE | `src/lib/business/marketing.ts` (Phase 11) | Yes | — | — |
@@ -114,7 +144,7 @@ service would plug in.
 | 35 | Hall of Fame, teacher-approval-gated, no unauthorized approval | COMPLETE | `src/lib/business/leaderboard.ts`, `src/app/teacher/hall-of-fame/actions.ts` | Yes | Yes | — |
 | 36 | Achievements/streaks, all triggers wired, no duplicate-award race | COMPLETE (race fixed this audit) | `src/lib/business/achievements.ts` | Yes | Yes | — |
 | 37 | Career guidance (honest suggestions, teacher-managed fields incl. roadmap/resources) | COMPLETE (gap round — gap #6) | `src/lib/business/career-guidance.ts` (`updateCareerField` keeps id+slug; roadmap/resources with http(s)-only URLs) | Yes | Yes | — |
-| 38 | Certificates (eligibility, no duplicate issuance, public verification) | COMPLETE (duplicate-issuance race fixed this audit) | `src/lib/business/certificates.ts`, real `@@unique([studentId, courseId])` | Yes, incl. concurrency-shaped test | Yes | Certificate codes are crypto-random (~50 bits) but there is **no QR code** — verification is a plain text URL only (documented, not fabricated) |
+| 38 | Certificates (eligibility, no duplicate issuance, public verification, **QR**) | COMPLETE (MF round). **Correction:** this row previously read COMPLETE although no QR code existed — it should have been PARTIAL until this round | `src/lib/business/certificates.ts` (`verifyCertificate`, `certificateQrSvg` via local `qrcode` library, `revokeCertificate`/`restoreCertificate`), public `/certificates/verify/[code]`, printable `/student/certificates/[id]` | Yes (21 tests: malformed/tampered/internal-id codes, revoked/restored, reason never public, audit log) | Yes (QR decoded from rendered pixels → exact public URL; valid / not-found / invalid / revoked shown without login; other student 404) | — |
 | 39 | Referral (valid/invalid/self/duplicate, real-conversion-only reward) | COMPLETE ($0-checkout gate fixed this audit) | `src/lib/business/referral.ts` | Yes | Yes | No anti-fake-account friction exists (honestly pre-documented in code, not hidden) |
 | 40 | Teacher profile (bio/education/experience/social links/contact/locations+schedule) | COMPLETE (gap round — gap #7) | `src/lib/business/teacher-profile.ts`, `/teacher/profile`, public `/teachers/[teacherId]` | Yes (incl. javascript:/malformed rejection) | Yes | — |
 | 41 | Support tickets (student/parent/teacher, ownership, statuses) | COMPLETE (authorization + notification gaps fixed this audit) | `src/lib/business/support.ts` | Yes | Yes | — |
@@ -122,7 +152,9 @@ service would plug in.
 | 43 | Notifications (lesson-unlock, subscription-activated, target-reached, achievement, support-reply) | COMPLETE (TARGET_REACHED race closed in gap round — gap #3) | `src/lib/business/notifications.ts` (real `@@unique([userId, dedupeKey])`) | Yes (stale-read race test) | Yes | — |
 | 44 | Announcements (ALL/STUDENT/COURSE/CATEGORY, never GROUP, correct targeting) | COMPLETE | `src/lib/business/announcements.ts` | Yes | — | — |
 | 45 | Global search, never leaks unpublished/draft/private data to students | COMPLETE | `src/lib/business/search.ts` | Yes | Yes | — |
-| 46 | Database integrity (constraints, indexes, cascade behavior) | COMPLETE for all business-critical paths audited | Migrations `20260920000000_final_audit_integrity_fixes`, `20260924000000_game_mini_cooldown`, `20260924000100_notification_dedupe_key` (all additive) | Yes | — | #8–#10 assessed and left unchanged pending product/data decisions — see Remaining Gaps |
+| 46 | Database integrity (constraints, indexes, cascade/restrict behavior, real FKs) | COMPLETE (FKs + RESTRICT + referral types added in MF round) | Migrations `20260925030000_user_relation_foreign_keys` (7 User FKs + Entitlement lesson/video RESTRICT) and `20260925040000_referral_reward_types`, each with an abort-before-DDL preflight | Yes (`schema-constraints.test.ts`) | Yes (DB refuses deleting an entitled lesson / a teacher with courses; constraints verified) | `PromoCode.value` intentionally unchanged (product decision) |
+| 47 | Course / lesson / video Publish · Unpublish · Archive, enforced everywhere | COMPLETE (MF round) | `src/lib/business/content-visibility.ts` (effective state over video→lesson→course), `content-status.ts`, teacher `StatusControls`; applied to dashboard, video page, search, stream, notes/bookmarks, heartbeat, quizzes, experiments, attachments, grants | Yes (16 visibility tests + route/quiz/experiment/attachment tests) | Yes (unpublish hides from holder incl. direct APIs; re-publish restores; archive keeps holders, blocks others/search/new grants; archived free lesson no longer free; video-only unpublish) | — |
+| 48 | Lesson attachments / PDF with protected download | COMPLETE (MF round) | `src/lib/business/attachments.ts` (magic-byte validation, signed 10-min token bound to student+attachment), `/api/attachments/[id]`, private `storage/attachments/` | Yes (25 tests incl. swapped id, video token reuse, revoked entitlement, unpublished course, traversal keys, header injection) | Yes (upload + spoofed/disallowed files rejected; download bytes checked; anonymous / other student / swapped id / forged token / raw path refused; unpublish revokes an issued link) | — |
 
 ## Critical Bugs Found
 
@@ -432,6 +464,90 @@ after `router.refresh()`, and that step had asserted on the transient
 text. The step now asserts on the server-recorded session. The brief
 score display itself predates this round and was left unchanged.
 
+### E2E — MUST FIX round (2026-09-25)
+
+A new 32-step suite ran against a production build (`next start`) and
+the dev database.
+
+**MF#1 — publish status**
+- An entitled student loses an unpublished lesson everywhere:
+  - the dashboard, the video URL (title hidden) and search;
+  - the notes, bookmarks and heartbeat APIs (403/4xx);
+  - the stream route (401).
+- The entitlement row itself is untouched.
+- Re-publishing restores access.
+- Archiving keeps the holder's access and shows a badge. Others are
+  refused, search hides it, and a teacher grant is refused. An archived
+  free lesson is no longer free.
+- Unpublishing only the video also hides it.
+
+**MF#2 — experiments**
+- The editor rejects bad configs, including an unreachable target and
+  `process.exit()`.
+- All four types were created and played in the browser.
+- The experiment page HTML contains no answer-key fields.
+- Replaying the captured `submitAttempt` server action with `[]`, with
+  empty placements, or with out-of-range values returns `ok:false`.
+- Another student replaying the submit on this attempt gets
+  "محاولة غير موجودة", and replaying `startAttempt` creates no attempt
+  for them.
+- EXERCISE heartbeats:
+  - refused without a live attempt, for a fabricated id, and for another
+    student;
+  - the client sends none while idle and none while the tab is hidden,
+    but does send them while the student is interacting.
+
+**MF#3 — attachments**
+- Spoofed `.pdf` and `.html` uploads are rejected, and the stored name is
+  sanitized from `../../`.
+- The downloaded bytes match the upload.
+- Refused cases:
+  - anonymous request (401);
+  - another student using the link (403);
+  - a swapped attachment id (401);
+  - a forged token (401);
+  - raw storage paths, which never serve the file.
+- Unpublishing revokes an already-issued link. Deleting the file gives
+  404.
+
+**MF#4 — certificate QR**
+- The QR was decoded from rendered pixels with `jsqr`. It decodes to
+  exactly the public verify URL and contains no internal id.
+- Without login, the page shows the certificate as valid.
+- A one-character change gives "not found"; the internal id,
+  SQL-ish input and `%` give "invalid"; lowercase is still valid.
+- Another student gets 404 on the printable page.
+- Revoke shows "revoked" with no reason; restore shows "valid" again.
+
+**MF#5 — report PDF**
+- Parent link approved; preview works; the Print button opens the print
+  dialog.
+- `page.pdf()` produced a 1-page PDF. Its text contains the student and
+  contextually shaped Arabic (presentation forms, visual RTL order), and
+  no NaN or navigation chrome.
+- Refused: an unlinked parent (404), the parent's own child's URL
+  carrying another student's report (404), a student, and anonymous
+  users.
+- Teachers can view the report.
+
+**SHOULD FIX**
+- Referral signup stores the enum type with an integer value of 7.
+- The database refuses deleting an entitled lesson or a teacher who owns
+  courses.
+- All 9 constraints are RESTRICT.
+
+**What E2E found:**
+1. The mini-game result was unmounted by `revalidatePath` inside
+   `playMove`/`submitAttempt`. Fixed: the client refreshes when the
+   student continues.
+2. A production server needs `AUTH_TRUST_HOST=true` (documented).
+3. Several test-side selector and assumption issues. For example, in RTL
+   ArrowRight *decreases* a range input, and search pages echo the query
+   text.
+
+The original 26-step suite and the 5 CSRF login scenarios were re-run
+against the same production build; see Production Readiness.
+
 ## External Infrastructure Required
 
 - **Real payment gateway** (Stripe/PayMob/Fawry/…) — the abstraction
@@ -446,8 +562,6 @@ score display itself predates this round and was left unchanged.
   automate both without any business-logic change.
 - **Email/SMS delivery** — `notify()` is the single hook point where this
   would be added without touching any trigger's call site.
-- **PDF generation** for certificates/reports (schema has the field; no
-  generator wired).
 - **CAPTCHA/anti-abuse** for registration: an *external security
   enhancement*, not an original requirement (needs reCAPTCHA/hCaptcha/
   Turnstile).
@@ -485,33 +599,41 @@ tests and, where it has UI, a browser E2E step:
 
 **Still open:**
 
-8. **`Entitlement.lessonId`/`videoId` use `onDelete: SetNull`.**
-   Unchanged: the fix needs a product decision. `RESTRICT` would block
-   deleting any lesson that ever had paid access, while `SetNull` loses
-   the audit trail of what was granted. Alternatives such as
-   soft-deleting content, or snapshotting the granted item's title into
-   the entitlement, are product choices. No live bug today.
-9. **Audit-relevant `*Id` columns without FKs** (`User.blockedById`,
-   `Course.teacherId`, `Entitlement.grantedById`, `Payment.confirmedById`,
-   …). Unchanged. Adding an FK fails the migration if production holds
-   any dangling id, which can't be verified from here, and the
-   `onDelete` behavior is a product choice (can a teacher account ever be
-   deleted?). No `user.delete()` path exists, so there is no live bug.
-   Safe procedure when decided: run a pre-check query for orphans, then
-   `ADD CONSTRAINT … NOT VALID`, then `VALIDATE CONSTRAINT`.
-10. **Numeric type nits** (`PromoCode.value` Float, `ReferralReward.rewardType`
-    String, `rewardValue` Float). Unchanged. Every read path already
-    rounds, so there is no live correctness bug. Changing
-    `PromoCode.value` to Int would drop fractional percentages, which is
-    a product decision. The two referral columns are only ever written
-    with one constant type and whole days, so converting them is cheap
-    once production data is confirmed clean.
+8. ~~`Entitlement.lessonId`/`videoId` use `onDelete: SetNull`~~ →
+   **CLOSED (MF round).** Now `RESTRICT`. This does not conflict with
+   unpublish/archive, which only change `status`, and no code path deletes
+   content. A delete of entitled content, directly or via the course
+   cascade, now fails instead of silently orphaning grants. Covered by
+   regression tests and an E2E database check.
+9. ~~Audit-relevant `*Id` columns without FKs~~ → **CLOSED (MF round)
+   for the seven real User relations:** `User.blockedById`,
+   `Course.teacherId`, `QuestionBank.teacherId`, `QuizAnswer.reviewedById`,
+   `Entitlement.grantedById`, `Payment.confirmedById`,
+   `HallOfFameEntry.approvedById`, all `ON DELETE RESTRICT`.
+   - The orphan check on existing data found 0 orphans in every column.
+   - The migration's preflight aborts before any DDL if orphans exist,
+     listing each column and its count. This was verified against a
+     deliberately orphaned row.
+   - No FKs were added on unused models such as `TeacherNote`.
+10. ~~Numeric type nits~~ → **CLOSED (MF round) for the referral columns:**
+    `ReferralReward.rewardType` is now the `ReferralRewardType` enum and
+    `rewardValue` is `INTEGER`.
+    - The data showed a single type, always a whole number of days.
+    - Both columns are converted in place with `USING` casts, and existing
+      rows are preserved.
+    - The preflight aborts on unknown types or non-integer values.
+    - A fractional reward-days setting is now rejected instead of being
+      truncated.
+    - **`PromoCode.value` is unchanged by design**: its meaning depends on
+      the promo `type`, which is a product decision.
 11. **No CAPTCHA on registration.** Reclassified as an *external security
     enhancement*: it isn't an original requirement and needs an external
     provider.
-12. **HLS/DASH/DRM/CDN, real payment gateway, scheduled jobs, PDF
-    generation.** External infrastructure. The existing abstractions are
-    unchanged, and nothing fakes any of them.
+12. **HLS/DASH/DRM/CDN, real payment gateway, scheduled jobs.** External
+    infrastructure. The existing abstractions are unchanged, and nothing
+    fakes any of them. (PDF is **not** external infrastructure: reports
+    and certificates are printable pages whose browser "Save as PDF" is
+    the PDF. See #27 and #38.)
 13. ~~Auth.js `MissingCSRF` on a first login in a fresh browser~~ →
     **CLOSED (2026-09-24, follow-up round).**
     - **Root cause:** Auth.js mints a new CSRF cookie on any auth request
@@ -546,7 +668,18 @@ tests and, where it has UI, a browser E2E step:
 
 ## Production Readiness Assessment
 
-**What is true today, as directly observed:**
+**Update 2026-09-25 (MUST FIX / SHOULD FIX round):**
+- tsc and eslint are clean, and the build succeeds.
+- Vitest: **417/417**.
+- Playwright: MUST FIX suite **32/32**, original suite **26/26**, CSRF
+  suite **5/5**, all against `next start`.
+- Gaps #8, #9 and #10 are closed (see Remaining Gaps).
+- Still open:
+  - #11 (CAPTCHA, an external enhancement);
+  - #12 (external media, payment and cron infrastructure);
+  - `PromoCode.value`, a product decision.
+
+**What was true at the end of the gap-closure round:**
 - `npx tsc --noEmit`: clean.
 - `npx eslint .`: clean.
 - `npm run build`: succeeds, all routes compile including the two newly

@@ -29,7 +29,15 @@ are applied to it automatically by Vitest's `globalSetup`.
   unlocking.
 - **Media**: `Video` (private `storageKey`, never a public URL),
   `VideoChapter`, `Short` (optionally linked to a source `Video` + timestamp),
-  `Attachment`, `StudentNote`, `Bookmark`.
+  `Attachment` (lesson files: private `storageKey`, sanitized
+  `originalName`, detected `mimeType`, `sizeBytes` — served only by
+  `/api/attachments/[id]`), `StudentNote`, `Bookmark`.
+- **Content status**: `Course`, `Lesson` and `Video` each carry
+  `status` (`DRAFT` / `PUBLISHED` / `ARCHIVED`). The effective state of a
+  video is the "weakest" along video → lesson → course: any `DRAFT` hides
+  it from everyone; otherwise any `ARCHIVED` makes it archived (existing
+  entitlement holders keep access; no listings, search, free access or new
+  grants). See `src/lib/business/content-visibility.ts`.
 - **Assessment**: `QuestionBank` → `Question` → `Quiz` → `QuizQuestion` (join
   with per-question points) → `QuizAttempt` → `QuizAnswer`. `Quiz.examType`
   distinguishes lesson quizzes from weekly/monthly/midterm/final/custom exams
@@ -64,8 +72,17 @@ are applied to it automatically by Vitest's `globalSetup`.
 - **Communication**: `TeacherNote` (private, teacher-only), `ParentReport`,
   `Notification`, `Announcement`, `LessonQuestion`/`LessonQuestionReply`,
   `LessonFeedback`.
+- **Experiments**: `Experiment.config` is a versioned JSON document (`v: 2`)
+  validated per `type` by the registry in `src/lib/experiments/definitions.ts`
+  (it contains the answer key and is never sent to the browser as-is).
+  `ExperimentAttempt` is open while `completedAt` and `endedAt` are both
+  null; `completedAt` = passed, `endedAt` without `completedAt` = a failed /
+  expired round; `resultJson` holds tries, scores and the mini-game state.
 - **Career/certification**: `CareerField`, `CareerExplorationResult`,
-  `Certificate` (public verification by `certificateCode`), `ReferralReward`.
+  `Certificate` (public verification by `certificateCode`; `revokedAt` /
+  `revokedReason` for teacher revocation), `ReferralReward` (`rewardType`
+  is the `ReferralRewardType` enum, `rewardValue` an integer number of
+  days).
 - **Support/store**: `SupportTicket`/`SupportTicketReply`/`SupportTicketAttachment`,
   `Product`/`Order`/`OrderItem`.
 - **Governance**: `AuditLog` (actor, action, entity, metadata — written by
@@ -80,20 +97,44 @@ what Prisma adds automatically for relations — e.g. `Video.status`,
 `[studentId, videoId]` and `[studentId, lessonId]`, `Notification` by
 `[userId, readAt]`.
 
-## What's migrated vs. not yet
+## Referential integrity
 
-Three migrations exist so far, all additive (no destructive migrations have
-been run):
-- `20260918144836_init` — the entire initial schema.
-- `20260918162100_add_pending_payment_status` — adds the
-  `PENDING_PAYMENT` enum value on its own (Postgres cannot use a new enum
-  value in the same transaction that adds it, so this had to be its own
-  migration rather than bundled with the next one).
-- `20260918162302_subscription_payment_phase2` — `Subscription.promoCodeId`/`cancelledAt`,
-  `Entitlement.expiresAt`/`grantedById`/`promoRedemptionId`,
-  `Payment.originalAmountCents`/`method`/`notes`/`confirmedById`/`failureReason`,
-  `PromoApplicableContent.lessonId`.
+Every column that stores another row's id is a real foreign key. The seven
+columns that point at `User` for ownership or "who did it" —
+`User.blockedById`, `Course.teacherId`, `QuestionBank.teacherId`,
+`QuizAnswer.reviewedById`, `Entitlement.grantedById`,
+`Payment.confirmedById`, `HallOfFameEntry.approvedById` — are
+`ON DELETE RESTRICT`: accounts are blocked, never deleted, and a user who
+owns content or appears on an audited row cannot be hard-deleted out from
+under it.
 
-Future phases (Shorts UI, games, career guidance content entry, etc.) will
-add data through this existing schema rather than altering it, except
-where a feature genuinely needs a new column/table.
+`Entitlement.lessonId` / `videoId` are also `RESTRICT` (they used to be
+Prisma's implicit `SET NULL`, which would have silently turned a student's
+grant into a row pointing at nothing if a lesson were deleted). Deleting
+entitled content — directly, or via the lesson → course cascade — now
+fails; unpublishing/archiving only changes `status` and is unaffected. No
+application code path deletes courses, lessons, videos or users.
+
+## Migrations
+
+All migrations are hand-reviewed. Destructive or type-changing ones start
+with a preflight `DO $$ … RAISE EXCEPTION` block that checks the data and
+aborts **before any DDL** if applying would lose or orphan anything, so a
+failed deploy leaves the database untouched:
+
+| Migration | What | Guard |
+|---|---|---|
+| `20260918144836_init` … `20260919123819_login_attempt_and_rate_limit` | Initial schema and phase additions | additive |
+| `20260920000000_final_audit_integrity_fixes` | Unique constraints behind race fixes | additive |
+| `20260924000000_game_mini_cooldown`, `20260924000100_notification_dedupe_key` | Gap-round unique keys | additive |
+| `20260925000000_experiment_attempt_ended_at` | `ExperimentAttempt.endedAt` (backfilled from `completedAt`) | additive |
+| `20260925010000_private_lesson_attachments` | `Attachment.fileUrl` → private storage columns | aborts if any Attachment row exists (none were ever created by the app) |
+| `20260925020000_certificate_revocation` | `Certificate.revokedAt` / `revokedReason` | additive |
+| `20260925030000_user_relation_foreign_keys` | 7 User FKs + Entitlement RESTRICT | aborts listing each column with orphaned ids |
+| `20260925040000_referral_reward_types` | `rewardType` → enum, `rewardValue` → `INTEGER`, converted in place with `USING` | aborts on unknown types or non-integer / out-of-range values |
+
+Before the FK migration was written, the development data was checked
+with an orphan query per column (all 0); both guards were also exercised
+against deliberately broken rows inside a rolled-back transaction.
+`PromoCode.value` is intentionally unchanged (its meaning depends on
+`type`, which is a product decision, not a typing fix).
