@@ -12,12 +12,32 @@ export default async function SavedMomentsPage() {
 
   const [bookmarks, notes] = await Promise.all([
     prisma.bookmark.findMany({
-      where: { studentId },
+      where: {
+        studentId,
+        // Moments on unpublished content stay stored but are not shown.
+        video: {
+          status: { not: "DRAFT" },
+          OR: [
+            { lessonId: null },
+            { lesson: { status: { not: "DRAFT" }, course: { status: { not: "DRAFT" } } } },
+          ],
+        },
+      },
       include: { video: { include: { lesson: true } } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.studentNote.findMany({
-      where: { studentId },
+      where: {
+        studentId,
+        // Moments on unpublished content stay stored but are not shown.
+        video: {
+          status: { not: "DRAFT" },
+          OR: [
+            { lessonId: null },
+            { lesson: { status: { not: "DRAFT" }, course: { status: { not: "DRAFT" } } } },
+          ],
+        },
+      },
       include: { video: { include: { lesson: true } } },
       orderBy: { createdAt: "desc" },
     }),

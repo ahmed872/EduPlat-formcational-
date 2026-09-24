@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { PUBLISHED_LESSON_WHERE, effectiveContentState } from "@/lib/business/content-visibility";
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -28,8 +29,14 @@ export default async function StudentDashboardPage() {
 
   const [entitlements, streak, dailyStats, targets, recentSessions, freeLessons] =
     await Promise.all([
+      // Unpublished (DRAFT) lessons/courses are hidden from everyone, even
+      // students who own them; archived ones stay listed for their owners.
       prisma.entitlement.findMany({
-        where: { studentId, revokedAt: null, lessonId: { not: null } },
+        where: {
+          studentId,
+          revokedAt: null,
+          lesson: { status: { not: "DRAFT" }, course: { status: { not: "DRAFT" } } },
+        },
         include: {
           lesson: {
             include: { course: true, video: true },
@@ -52,7 +59,11 @@ export default async function StudentDashboardPage() {
       // so they must be surfaced here independently of the entitlement list
       // above — otherwise a student would have no way to discover them.
       prisma.lesson.findMany({
-        where: { isFree: true, status: "PUBLISHED", video: { isFree: true } },
+        where: {
+          ...PUBLISHED_LESSON_WHERE,
+          isFree: true,
+          video: { isFree: true, status: "PUBLISHED" },
+        },
         include: { course: true, video: true },
       }),
     ]);
@@ -104,13 +115,22 @@ export default async function StudentDashboardPage() {
         lessons: [],
       });
     }
-    courseGroups.get(courseId)!.lessons.push(entitlement);
+    const group = courseGroups.get(courseId)!;
+    if (!group.lessons.some((e) => e.lesson!.id === entitlement.lesson!.id)) {
+      group.lessons.push(entitlement);
+    }
   }
 
   // "Continue watching": most recently watched video whose lesson isn't completed.
   const continueWatching = recentSessions.find((watchSession) => {
     const lessonId = watchSession.video.lesson?.id;
     if (!lessonId) return false;
+    const state = effectiveContentState(
+      watchSession.video.status,
+      watchSession.video.lesson?.status,
+      watchSession.video.lesson?.course.status,
+    );
+    if (state === "HIDDEN") return false;
     return progressByLesson.get(lessonId)?.status !== "COMPLETED";
   });
 
@@ -202,12 +222,19 @@ export default async function StudentDashboardPage() {
                     key={lesson.id}
                     className="flex items-center justify-between rounded-md border border-gray-100 px-3 py-2"
                   >
-                    <span>{lesson.title}</span>
+                    <span>
+                      {lesson.title}
+                      {effectiveContentState(lesson.status, lesson.course.status) === "ARCHIVED" && (
+                        <span className="ms-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                          مؤرشف
+                        </span>
+                      )}
+                    </span>
                     <div className="flex items-center gap-3 text-xs">
                       <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
                         {status}
                       </span>
-                      {lesson.video && (
+                      {lesson.video && lesson.video.status !== "DRAFT" && (
                         <Link
                           href={`/student/videos/${lesson.video.id}`}
                           className="text-indigo-600 hover:underline"

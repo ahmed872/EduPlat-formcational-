@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { checkLessonAvailability } from "@/lib/business/content-visibility";
 import { canStartNewAttempt, getQuestionsForAttempt } from "@/lib/business/quiz";
 import { startAttempt } from "./actions";
 import { ExamRunner } from "./exam-runner";
@@ -16,6 +17,23 @@ export default async function StudentExamPage({
 
   const quiz = await prisma.quiz.findUnique({ where: { id: quizId } });
   if (!quiz) notFound();
+
+  // A lesson quiz is only reachable by students who can use its lesson
+  // (published + entitled); startQuizAttempt enforces the same rule
+  // server-side, this just avoids rendering an unpublished lesson's quiz.
+  if (quiz.lessonId) {
+    const availability = await checkLessonAvailability(prisma, {
+      studentId,
+      lessonId: quiz.lessonId,
+    });
+    if (!availability.allowed) {
+      return (
+        <div className="mx-auto max-w-2xl rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
+          هذا الاختبار غير متاح لك.
+        </div>
+      );
+    }
+  }
 
   const attempts = await prisma.quizAttempt.findMany({
     where: { quizId, studentId },

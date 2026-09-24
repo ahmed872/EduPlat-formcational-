@@ -1,3 +1,4 @@
+import { canAccessLesson, checkLessonAvailability } from "@/lib/business/content-visibility";
 import type { PrismaClient, QuestionType } from "@prisma/client";
 import { notify } from "@/lib/business/notifications";
 import { allRequiredExperimentsCompleted } from "@/lib/business/experiment";
@@ -183,6 +184,21 @@ export async function startQuizAttempt(
   }
 
   if (quiz.examType === "LESSON_QUIZ" && quiz.lessonId) {
+    // A lesson quiz belongs to its lesson: an unpublished lesson's quiz, or a
+    // paid lesson's quiz the student never bought, must not be startable just
+    // because its quizId is known.
+    const availability = await checkLessonAvailability(prisma, {
+      studentId: params.studentId,
+      lessonId: quiz.lessonId,
+    });
+    if (!availability.allowed) {
+      throw new Error(
+        availability.reason === "NOT_ENTITLED"
+          ? "You do not have access to this lesson"
+          : "This lesson is not available",
+      );
+    }
+
     // The lesson-sequence gate (canAccessLesson) is otherwise only enforced
     // when rendering the video page — without this check here, a student
     // who obtains a later lesson's quizId (guessed/shared/found in the
@@ -555,39 +571,5 @@ async function markLessonCompletedAndUnlockNext(
   }
 }
 
-export type LessonAccessDecision =
-  | { allowed: true }
-  | { allowed: false; reason: "PREVIOUS_LESSON_NOT_COMPLETED" };
-
-export async function canAccessLesson(
-  prisma: PrismaClient,
-  params: { studentId: string; lessonId: string },
-): Promise<LessonAccessDecision> {
-  const lesson = await prisma.lesson.findUniqueOrThrow({
-    where: { id: params.lessonId },
-  });
-
-  // `isFree` only means "no paid entitlement required" (see checkVideoAccess's
-  // FREE_VIDEO rule) — it must NOT also bypass the sequential-unlock
-  // requirement. A free lesson with a requiredPreviousLessonId still has to
-  // wait for that prerequisite, same as a paid one (real bug found in the
-  // final audit: this used to short-circuit on isFree alone).
-  if (!lesson.requiredPreviousLessonId) {
-    return { allowed: true };
-  }
-
-  const previousProgress = await prisma.lessonProgress.findUnique({
-    where: {
-      studentId_lessonId: {
-        studentId: params.studentId,
-        lessonId: lesson.requiredPreviousLessonId,
-      },
-    },
-  });
-
-  if (previousProgress?.status === "COMPLETED" && previousProgress.quizPassed) {
-    return { allowed: true };
-  }
-
-  return { allowed: false, reason: "PREVIOUS_LESSON_NOT_COMPLETED" };
-}
+export { canAccessLesson };
+export type { LessonAccessDecision } from "@/lib/business/content-visibility";

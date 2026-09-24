@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createLesson, createStudent } from "@/test/factories";
+import { createEntitlement, createLesson, createStudent } from "@/test/factories";
 import { createQuestion, createQuiz } from "@/test/factories-quiz";
 import {
   canAccessLesson,
@@ -18,6 +18,7 @@ describe("quiz grading and lesson unlocking", () => {
   it("passing the quiz unlocks the next lesson", async () => {
     const student = await createStudent();
     const lessonA = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lessonA.id });
     const lessonB = await createLesson({
       requiredPreviousLessonId: lessonA.id,
     });
@@ -58,6 +59,7 @@ describe("quiz grading and lesson unlocking", () => {
   it("a free lesson with a prerequisite is still locked until that prerequisite is passed (isFree must not bypass sequential unlocking)", async () => {
     const student = await createStudent();
     const lessonA = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lessonA.id });
     const lessonB = await createLesson({
       isFree: true,
       requiredPreviousLessonId: lessonA.id,
@@ -94,6 +96,7 @@ describe("quiz grading and lesson unlocking", () => {
   it("failing the quiz keeps the next lesson locked", async () => {
     const student = await createStudent();
     const lessonA = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lessonA.id });
     const lessonB = await createLesson({
       requiredPreviousLessonId: lessonA.id,
     });
@@ -124,6 +127,7 @@ describe("quiz grading and lesson unlocking", () => {
   it("manual grading of an essay question can flip the attempt to passed", async () => {
     const student = await createStudent();
     const lessonA = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lessonA.id });
     const question = await createQuestion({
       type: "ESSAY",
       correctAnswer: null,
@@ -165,6 +169,7 @@ describe("quiz grading and lesson unlocking", () => {
   it("enforces the maximum attempts limit", async () => {
     const student = await createStudent();
     const lessonA = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lessonA.id });
     const question = await createQuestion({ correctAnswer: "A" });
     const quiz = await createQuiz({
       lessonId: lessonA.id,

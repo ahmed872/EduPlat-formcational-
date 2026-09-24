@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { PUBLISHED_LESSON_WHERE } from "@/lib/business/content-visibility";
 import { checkVideoAccess } from "@/lib/business/video-access";
 import { canAccessLesson } from "@/lib/business/quiz";
 import { allRequiredExperimentsCompleted, getExperimentsWithStatus } from "@/lib/business/experiment";
@@ -26,7 +27,11 @@ export default async function WatchVideoPage({
       chapters: { orderBy: { order: "asc" } },
       lesson: {
         include: {
-          nextLessons: { include: { video: true }, orderBy: { order: "asc" } },
+          nextLessons: {
+            where: PUBLISHED_LESSON_WHERE,
+            include: { video: true },
+            orderBy: { order: "asc" },
+          },
         },
       },
     },
@@ -36,13 +41,19 @@ export default async function WatchVideoPage({
   // Sequential unlocking (requiredPreviousLessonId) had a real business-logic
   // implementation and tests (canAccessLesson) since Foundation, but was
   // never actually called from a route — this closes that gap.
-  const lessonAccess = video.lesson
-    ? await canAccessLesson(prisma, { studentId, lessonId: video.lesson.id })
-    : { allowed: true as const };
+  // Visibility/entitlement first, so an unpublished lesson never reveals
+  // anything about itself (not even its prerequisite state).
+  const videoDecision = await checkVideoAccess(prisma, { studentId, videoId });
+  const lessonAccess =
+    videoDecision.allowed && video.lesson
+      ? await canAccessLesson(prisma, { studentId, lessonId: video.lesson.id })
+      : { allowed: true as const };
 
-  const decision = lessonAccess.allowed
-    ? await checkVideoAccess(prisma, { studentId, videoId })
-    : ({ allowed: false, reason: "PREVIOUS_LESSON_NOT_COMPLETED" } as const);
+  const decision = !videoDecision.allowed
+    ? videoDecision
+    : lessonAccess.allowed
+      ? videoDecision
+      : ({ allowed: false, reason: "PREVIOUS_LESSON_NOT_COMPLETED" } as const);
 
   const [lastSession, notes, bookmarks, experimentStatuses, lessonQuiz] = decision.allowed
     ? await Promise.all([
@@ -78,7 +89,9 @@ export default async function WatchVideoPage({
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
-      <h1 className="text-xl font-bold">{video.title}</h1>
+      <h1 className="text-xl font-bold">
+        {!decision.allowed && decision.reason === "CONTENT_UNAVAILABLE" ? "محتوى غير متاح" : video.title}
+      </h1>
 
       {!decision.allowed ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
@@ -92,6 +105,7 @@ export default async function WatchVideoPage({
             </p>
           )}
           {decision.reason === "VIDEO_NOT_FOUND" && <p>الفيديو غير موجود.</p>}
+          {decision.reason === "CONTENT_UNAVAILABLE" && <p>هذا المحتوى غير متاح حاليًا.</p>}
           {decision.reason === "PREVIOUS_LESSON_NOT_COMPLETED" && (
             <p>يجب إكمال الدرس السابق واجتياز اختباره أولًا للوصول لهذا الدرس.</p>
           )}
@@ -180,7 +194,7 @@ export default async function WatchVideoPage({
                 {video.lesson.nextLessons.map((next) => (
                   <li key={next.id} className="flex items-center justify-between text-sm">
                     <span>{next.title}</span>
-                    {next.video ? (
+                    {next.video && next.video.status === "PUBLISHED" ? (
                       <Link
                         href={`/student/videos/${next.video.id}`}
                         className="rounded-md bg-gray-800 px-3 py-1 text-xs text-white hover:bg-gray-900"

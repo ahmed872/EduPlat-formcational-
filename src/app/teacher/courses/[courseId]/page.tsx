@@ -6,10 +6,9 @@ import {
   createLesson,
   deleteExperiment,
   deleteVideoChapter,
-  publishCourse,
-  publishLesson,
   uploadLessonVideo,
 } from "../actions";
+import { StatusControls } from "./status-controls";
 
 const EXPERIMENT_TYPE_LABELS: Record<string, string> = {
   SIMULATION: "محاكاة",
@@ -41,7 +40,6 @@ export default async function CourseDetailPage({
   if (!course) notFound();
 
   const createLessonWithCourse = createLesson.bind(null, courseId);
-  const publishCourseAction = publishCourse.bind(null, courseId);
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,16 +48,13 @@ export default async function CourseDetailPage({
           <p className="text-sm text-gray-500">{course.category.name}</p>
           <h1 className="text-2xl font-bold">{course.title}</h1>
         </div>
-        {course.status !== "PUBLISHED" && (
-          <form action={publishCourseAction}>
-            <button
-              type="submit"
-              className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700"
-            >
-              نشر الكورس
-            </button>
-          </form>
-        )}
+        <StatusControls
+          courseId={courseId}
+          kind="COURSE"
+          id={course.id}
+          status={course.status}
+          publishLabel="نشر الكورس"
+        />
       </div>
 
       <div className="flex flex-col gap-3">
@@ -79,35 +74,23 @@ export default async function CourseDetailPage({
                     : ""}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
-                <span
-                  className={
-                    lesson.status === "PUBLISHED"
-                      ? "rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700"
-                      : "rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
-                  }
-                >
-                  {lesson.status === "PUBLISHED" ? "منشور" : "مسودة"}
-                </span>
-                {lesson.status !== "PUBLISHED" && (
-                  <form action={publishLesson.bind(null, courseId, lesson.id)}>
-                    <button
-                      type="submit"
-                      className="text-xs text-indigo-600 hover:underline"
-                    >
-                      نشر
-                    </button>
-                  </form>
-                )}
-              </div>
+              <StatusControls courseId={courseId} kind="LESSON" id={lesson.id} status={lesson.status} />
             </div>
 
             <div className="mt-3 border-t border-gray-100 pt-3">
               {lesson.video ? (
-                <p className="text-xs text-gray-500">
-                  ✓ يوجد فيديو مرفوع ({Math.round((lesson.video.durationSeconds ?? 0) / 60)}{" "}
-                  دقيقة) — يمكن استبداله برفع ملف جديد أدناه.
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-gray-500">
+                    ✓ يوجد فيديو مرفوع ({Math.round((lesson.video.durationSeconds ?? 0) / 60)}{" "}
+                    دقيقة) — يمكن استبداله برفع ملف جديد أدناه.
+                  </p>
+                  <StatusControls
+                    courseId={courseId}
+                    kind="VIDEO"
+                    id={lesson.video.id}
+                    status={lesson.video.status}
+                  />
+                </div>
               ) : (
                 <p className="text-xs text-amber-600">لا يوجد فيديو مرفوع لهذا الدرس بعد.</p>
               )}

@@ -74,10 +74,16 @@ export default async function CoursesPage() {
                 className={
                   course.status === "PUBLISHED"
                     ? "rounded-full bg-green-100 px-2 py-0.5 text-green-700"
-                    : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"
+                    : course.status === "ARCHIVED"
+                      ? "rounded-full bg-amber-100 px-2 py-0.5 text-amber-800"
+                      : "rounded-full bg-gray-100 px-2 py-0.5 text-gray-600"
                 }
               >
-                {course.status === "PUBLISHED" ? "منشور" : "مسودة"}
+                {course.status === "PUBLISHED"
+                  ? "منشور"
+                  : course.status === "ARCHIVED"
+                    ? "مؤرشف"
+                    : "غير منشور"}
               </span>
             </div>
           </Link>

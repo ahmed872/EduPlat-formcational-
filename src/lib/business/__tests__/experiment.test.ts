@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createLesson, createStudent, createExperiment } from "@/test/factories";
+import { createEntitlement, createLesson, createStudent, createExperiment } from "@/test/factories";
 import { createQuiz } from "@/test/factories-quiz";
 import {
   allRequiredExperimentsCompleted,
@@ -139,6 +139,7 @@ describe("lesson quiz gated by required experiments", () => {
   it("blocks starting the lesson quiz until required experiments are completed", async () => {
     const student = await createStudent();
     const lesson = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lesson.id });
     const experiment = await createExperiment({ lessonId: lesson.id, isRequired: true });
     const quiz = await createQuiz({ lessonId: lesson.id });
 
@@ -162,6 +163,7 @@ describe("lesson quiz gated by required experiments", () => {
   it("does not block a lesson quiz when the lesson has no required experiments", async () => {
     const student = await createStudent();
     const lesson = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lesson.id });
     const quiz = await createQuiz({ lessonId: lesson.id });
 
     const quizAttempt = await startQuizAttempt(prisma, {

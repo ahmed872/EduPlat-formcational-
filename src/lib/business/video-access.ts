@@ -1,14 +1,40 @@
 import type { PrismaClient } from "@prisma/client";
 import {
+  PUBLISHED_LESSON_WHERE,
+  effectiveContentState,
+  liveEntitlementWhere,
+} from "@/lib/business/content-visibility";
+import {
   PLATFORM_SETTING_KEYS,
   getPlatformSetting,
 } from "@/lib/platform-settings";
+
+/**
+ * New grants only ever cover content that is published at grant time: a
+ * lesson/course that is still a draft (so "published later") or archived
+ * is never snapshotted into a new entitlement, and neither is a video that
+ * is not itself published.
+ */
+function grantableVideoId(video: { id: string; status: string } | null | undefined) {
+  return video && video.status === "PUBLISHED" ? video.id : undefined;
+}
+
+async function assertLessonGrantable(prisma: PrismaClient, lessonId: string) {
+  const lesson = await prisma.lesson.findUniqueOrThrow({
+    where: { id: lessonId },
+    include: { video: true, course: true },
+  });
+  if (effectiveContentState(lesson.status, lesson.course.status) !== "PUBLISHED") {
+    throw new Error("لا يمكن منح وصول لدرس غير منشور أو مؤرشف");
+  }
+  return lesson;
+}
 
 export type VideoAccessDecision =
   | { allowed: true; reason: "FREE_VIDEO" | "ENTITLED"; viewsUsed: number; viewLimit: number | null }
   | {
       allowed: false;
-      reason: "VIDEO_NOT_FOUND" | "NOT_ENTITLED" | "VIEW_LIMIT_REACHED";
+      reason: "VIDEO_NOT_FOUND" | "CONTENT_UNAVAILABLE" | "NOT_ENTITLED" | "VIEW_LIMIT_REACHED";
       viewsUsed: number;
       viewLimit: number | null;
     };
@@ -19,6 +45,11 @@ export type VideoAccessDecision =
  * requires an explicit, auditable Entitlement row for this exact video (or
  * its lesson), which is how newly published content never leaks into an
  * older purchase (see grantEntitlementsForSubscription).
+ *
+ * Publication state is enforced here too (see content-visibility.ts): an
+ * unpublished video/lesson/course is refused to everyone, and an archived
+ * one is no longer free for everyone — only existing entitlement holders
+ * keep access.
  */
 export async function checkVideoAccess(
   prisma: PrismaClient,
@@ -26,11 +57,26 @@ export async function checkVideoAccess(
 ): Promise<VideoAccessDecision> {
   const video = await prisma.video.findUnique({
     where: { id: params.videoId },
+    include: { lesson: { include: { course: true } } },
   });
   if (!video) {
     return {
       allowed: false,
       reason: "VIDEO_NOT_FOUND",
+      viewsUsed: 0,
+      viewLimit: null,
+    };
+  }
+
+  const state = effectiveContentState(
+    video.status,
+    video.lesson?.status,
+    video.lesson?.course.status,
+  );
+  if (state === "HIDDEN") {
+    return {
+      allowed: false,
+      reason: "CONTENT_UNAVAILABLE",
       viewsUsed: 0,
       viewLimit: null,
     };
@@ -44,7 +90,7 @@ export async function checkVideoAccess(
     },
   });
 
-  if (video.isFree) {
+  if (video.isFree && state === "PUBLISHED") {
     return { allowed: true, reason: "FREE_VIDEO", viewsUsed, viewLimit: null };
   }
 
@@ -53,15 +99,7 @@ export async function checkVideoAccess(
     where: {
       studentId: params.studentId,
       videoId: params.videoId,
-      revokedAt: null,
-      OR: [
-        // Subscription-backed grant: valid while the subscription itself is active and unexpired.
-        { subscriptionId: { not: null }, subscription: { status: "ACTIVE", expiresAt: { gt: now } } },
-        // Standalone grant (PROMO/FREE/ADMIN_GRANT) with no expiry — permanent.
-        { subscriptionId: null, expiresAt: null },
-        // Standalone grant with a time-boxed expiry (e.g. a FREE_PERIOD promo).
-        { subscriptionId: null, expiresAt: { gt: now } },
-      ],
+      ...liveEntitlementWhere(now),
     },
   });
 
@@ -212,7 +250,7 @@ export async function grantEntitlementsForSubscription(
   }
 
   const lessons = await prisma.lesson.findMany({
-    where: { id: { in: Array.from(lessonIds) } },
+    where: { id: { in: Array.from(lessonIds) }, ...PUBLISHED_LESSON_WHERE },
     include: { video: true },
   });
 
@@ -223,14 +261,14 @@ export async function grantEntitlementsForSubscription(
           studentId: subscription.studentId,
           subscriptionId: subscription.id,
           lessonId: lesson.id,
-          videoId: lesson.video?.id,
+          videoId: grantableVideoId(lesson.video),
           reason: "SUBSCRIPTION",
         },
       }),
     ),
   );
 
-  return lessonIds.size;
+  return lessons.length;
 }
 
 /**
@@ -248,16 +286,13 @@ export async function grantAdminEntitlement(
     expiresAt?: Date;
   },
 ) {
-  const lesson = await prisma.lesson.findUniqueOrThrow({
-    where: { id: params.lessonId },
-    include: { video: true },
-  });
+  const lesson = await assertLessonGrantable(prisma, params.lessonId);
 
   return prisma.entitlement.create({
     data: {
       studentId: params.studentId,
       lessonId: lesson.id,
-      videoId: lesson.video?.id,
+      videoId: grantableVideoId(lesson.video),
       reason: "ADMIN_GRANT",
       grantedById: params.grantedById,
       expiresAt: params.expiresAt,
@@ -286,10 +321,7 @@ export async function grantLessonToCourseSubscribers(
   params: { lessonId: string; grantedById: string; expiresAt?: Date; now?: Date },
 ): Promise<{ granted: number; skipped: number }> {
   const now = params.now ?? new Date();
-  const lesson = await prisma.lesson.findUniqueOrThrow({
-    where: { id: params.lessonId },
-    include: { video: true },
-  });
+  const lesson = await assertLessonGrantable(prisma, params.lessonId);
 
   const subscriptions = await prisma.subscription.findMany({
     where: {
@@ -327,7 +359,7 @@ export async function grantLessonToCourseSubscribers(
         data: {
           studentId,
           lessonId: lesson.id,
-          videoId: lesson.video?.id,
+          videoId: grantableVideoId(lesson.video),
           reason: "ADMIN_GRANT",
           grantedById: params.grantedById,
           expiresAt:
@@ -379,7 +411,7 @@ export async function grantEntitlementsForPromoRedemption(
   }
 
   const lessons = await prisma.lesson.findMany({
-    where: { id: { in: Array.from(lessonIds) } },
+    where: { id: { in: Array.from(lessonIds) }, ...PUBLISHED_LESSON_WHERE },
     include: { video: true },
   });
 
@@ -390,7 +422,7 @@ export async function grantEntitlementsForPromoRedemption(
           studentId: params.studentId,
           promoRedemptionId: params.redemptionId,
           lessonId: lesson.id,
-          videoId: lesson.video?.id,
+          videoId: grantableVideoId(lesson.video),
           reason: "PROMO",
           expiresAt: params.expiresAt,
         },
@@ -398,5 +430,5 @@ export async function grantEntitlementsForPromoRedemption(
     ),
   );
 
-  return lessonIds.size;
+  return lessons.length;
 }

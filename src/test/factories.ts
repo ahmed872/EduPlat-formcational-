@@ -123,3 +123,16 @@ export async function createExperiment(overrides: {
     },
   });
 }
+
+/** A permanent, live admin grant of one lesson (and its video) to a student. */
+export async function createEntitlement(params: { studentId: string; lessonId: string }) {
+  const video = await prisma.video.findUnique({ where: { lessonId: params.lessonId } });
+  return prisma.entitlement.create({
+    data: {
+      studentId: params.studentId,
+      lessonId: params.lessonId,
+      videoId: video?.id,
+      reason: "ADMIN_GRANT",
+    },
+  });
+}

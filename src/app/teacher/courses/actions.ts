@@ -6,6 +6,8 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import { getVideoStorageProvider } from "@/lib/storage/provider";
+import { setContentStatus, type ContentKind } from "@/lib/business/content-status";
+import type { ContentStatus } from "@prisma/client";
 
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024; // 500MB — matches next.config.ts server action body limit
@@ -36,15 +38,36 @@ export async function createCourse(formData: FormData) {
 }
 
 export async function publishCourse(courseId: string) {
+  await setCourseContentStatus(courseId, "COURSE", courseId, "PUBLISHED");
+}
+
+/**
+ * Publish / Unpublish (DRAFT) / Archive for a course, lesson or video — the
+ * role check is enforced again inside setContentStatus itself.
+ */
+export async function setCourseContentStatus(
+  courseId: string,
+  kind: ContentKind,
+  id: string,
+  status: ContentStatus,
+) {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
-  await prisma.course.update({
-    where: { id: courseId },
-    data: { status: "PUBLISHED" },
-  });
+  // The lesson/video must actually belong to the course in the URL, so a
+  // form bound to one course can't be replayed against another course's ids.
+  if (kind === "LESSON") {
+    await prisma.lesson.findFirstOrThrow({ where: { id, courseId } });
+  } else if (kind === "VIDEO") {
+    await prisma.video.findFirstOrThrow({ where: { id, lesson: { courseId } } });
+  } else if (id !== courseId) {
+    throw new Error("معرّف الكورس غير متطابق");
+  }
+
+  await setContentStatus(prisma, { actorRole: session.user.role, kind, id, status });
 
   revalidatePath(`/teacher/courses/${courseId}`);
+  revalidatePath("/teacher/courses");
 }
 
 export async function createLesson(courseId: string, formData: FormData) {
@@ -74,15 +97,7 @@ export async function createLesson(courseId: string, formData: FormData) {
 }
 
 export async function publishLesson(courseId: string, lessonId: string) {
-  const session = await auth();
-  requireRole(session, ["TEACHER_ADMIN"]);
-
-  await prisma.lesson.update({
-    where: { id: lessonId },
-    data: { status: "PUBLISHED", releaseAt: new Date() },
-  });
-
-  revalidatePath(`/teacher/courses/${courseId}`);
+  await setCourseContentStatus(courseId, "LESSON", lessonId, "PUBLISHED");
 }
 
 /**

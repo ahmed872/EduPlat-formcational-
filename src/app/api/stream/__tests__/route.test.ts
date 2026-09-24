@@ -120,6 +120,24 @@ describe("GET /api/stream/[videoId]", () => {
     expect(response!.status).toBe(403);
   });
 
+  it("refuses an unpublished video even with a valid token and the owner's session", async () => {
+    const student = await createStudent();
+    const lesson = await createLesson({ isFree: true });
+    const video = await createVideo({ lessonId: lesson.id, isFree: true });
+    await getVideoStorageProvider().save(video.storageKey, Buffer.from("content"));
+    const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+    await prisma.lesson.update({ where: { id: lesson.id }, data: { status: "DRAFT" } });
+
+    const user = await studentUserOf(student);
+    const cookie = await sessionCookieFor({ id: user.id, role: user.role, studentProfileId: student.id });
+    const request = new NextRequest(`http://localhost/api/stream/${video.id}?token=${token}`, {
+      headers: { cookie },
+    });
+
+    const response = await GET(request, { params: Promise.resolve({ videoId: video.id }) });
+    expect(response!.status).toBe(403);
+  });
+
   // Regression coverage for the real gap found in the final audit: a copied
   // signed URL used to work for any bearer — logged out entirely, or logged
   // in as someone else — for the token's full 4-hour lifetime, because the
