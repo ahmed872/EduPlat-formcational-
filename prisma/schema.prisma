@@ -348,7 +348,11 @@ model ExperimentAttempt {
   student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
   resultJson   Json?
   startedAt    DateTime       @default(now())
+  // Set only when the attempt passed server-side validation.
   completedAt  DateTime?
+  // Set when the attempt is closed for good — on success, or on a failed
+  // mini-game round (lives/time ran out) so the next try is a fresh attempt.
+  endedAt      DateTime?
 
   @@index([experimentId, studentId])
 }

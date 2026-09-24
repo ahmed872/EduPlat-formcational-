@@ -2,20 +2,15 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import {
   addVideoChapter,
-  createExperiment,
   createLesson,
   deleteExperiment,
   deleteVideoChapter,
   uploadLessonVideo,
 } from "../actions";
 import { StatusControls } from "./status-controls";
+import { ExperimentEditor } from "./experiment-editor";
+import { EXPERIMENT_TYPE_LABELS, resolveExperiment } from "@/lib/experiments/definitions";
 
-const EXPERIMENT_TYPE_LABELS: Record<string, string> = {
-  SIMULATION: "محاكاة",
-  DRAG_AND_DROP: "سحب وإفلات",
-  MINI_GAME: "لعبة تعليمية",
-  INTERACTIVE: "تفاعلية",
-};
 
 export default async function CourseDetailPage({
   params,
@@ -216,6 +211,12 @@ export default async function CourseDetailPage({
                       <span>
                         [{EXPERIMENT_TYPE_LABELS[experiment.type] ?? experiment.type}]{" "}
                         {experiment.title}{" "}
+                        {resolveExperiment(experiment)?.kind === "LEGACY_STEPS" && (
+                          <span className="text-gray-400">(صيغة قديمة: خطوات)</span>
+                        )}
+                        {!resolveExperiment(experiment) && (
+                          <span className="text-red-600">(إعدادات غير صالحة — احذفها وأعد إنشاءها)</span>
+                        )}{" "}
                         {experiment.isRequired ? (
                           <span className="text-amber-600">(إلزامية)</span>
                         ) : (
@@ -233,72 +234,11 @@ export default async function CourseDetailPage({
                     <li className="text-xs text-gray-400">لا توجد تجارب بعد.</li>
                   )}
                 </ul>
-                <form
-                  action={createExperiment.bind(null, courseId, lesson.id)}
-                  className="flex flex-wrap items-end gap-2"
-                >
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-600">النوع</span>
-                    <select
-                      name="type"
-                      required
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
-                    >
-                      {Object.entries(EXPERIMENT_TYPE_LABELS).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-600">العنوان</span>
-                    <input
-                      name="title"
-                      required
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
-                    />
-                  </label>
-                  <label className="flex flex-1 basis-full flex-col gap-1">
-                    <span className="text-xs text-gray-600">تعليمات التجربة</span>
-                    <textarea
-                      name="instructions"
-                      required
-                      rows={2}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
-                    />
-                  </label>
-                  <label className="flex flex-1 basis-full flex-col gap-1">
-                    <span className="text-xs text-gray-600">
-                      خطوات (اختياري — سطر لكل خطوة)
-                    </span>
-                    <textarea
-                      name="steps"
-                      rows={2}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-600">
-                      رابط تجربة خارجي (اختياري)
-                    </span>
-                    <input
-                      name="embedUrl"
-                      type="url"
-                      className="min-w-56 rounded-md border border-gray-300 px-2 py-1 text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-1 pb-1">
-                    <input type="checkbox" name="isRequired" defaultChecked />
-                    <span className="text-xs text-gray-600">إلزامية قبل اختبار الدرس</span>
-                  </label>
-                  <button
-                    type="submit"
-                    className="rounded-md bg-gray-200 px-3 py-1.5 text-xs hover:bg-gray-300"
-                  >
-                    إضافة تجربة
-                  </button>
-                </form>
+                <ExperimentEditor
+                  courseId={courseId}
+                  lessonId={lesson.id}
+                  labels={EXPERIMENT_TYPE_LABELS}
+                />
               </div>
             </div>
           </div>

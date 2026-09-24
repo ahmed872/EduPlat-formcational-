@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
 import {
   createCourse,
+  createEntitlement,
   createExperiment,
   createLesson,
   createStudent,
@@ -15,6 +16,7 @@ import {
   recordHeartbeat,
 } from "@/lib/business/study-time";
 import { grantEntitlementsForSubscription } from "@/lib/business/video-access";
+import { startExperimentAttempt, submitExperimentAttempt } from "@/lib/business/experiment";
 
 beforeEach(async () => {
   await resetDatabase();
@@ -90,20 +92,6 @@ describe("assertHeartbeatTargetIsReal", () => {
     ).rejects.toThrow(/access|exist/);
   });
 
-  it("allows a free lesson's exercise with no entitlement needed", async () => {
-    const student = await createStudent();
-    const lesson = await createLesson({ isFree: true });
-    const experiment = await createExperiment({ lessonId: lesson.id });
-
-    await expect(
-      assertHeartbeatTargetIsReal(prisma, {
-        studentId: student.id,
-        type: "EXERCISE",
-        refId: experiment.id,
-      }),
-    ).resolves.toBeUndefined();
-  });
-
   it("rejects a paid lesson's exercise for a non-entitled student", async () => {
     const student = await createStudent();
     const lesson = await createLesson({ isFree: false });
@@ -116,6 +104,113 @@ describe("assertHeartbeatTargetIsReal", () => {
         refId: experiment.id,
       }),
     ).rejects.toThrow(/access/);
+  });
+});
+
+describe("EXERCISE heartbeats require a live attempt", () => {
+  const MINI_GAME = {
+    v: 2,
+    instructions: "x",
+    questions: [
+      { prompt: "a", choices: ["1", "2"], correctIndex: 0 },
+      { prompt: "b", choices: ["1", "2"], correctIndex: 0 },
+    ],
+    lives: 1,
+    timeLimitSeconds: 30,
+    passScore: 1,
+  };
+
+  async function entitledExercise(config?: unknown) {
+    const student = await createStudent();
+    const lesson = await createLesson();
+    await createEntitlement({ studentId: student.id, lessonId: lesson.id });
+    const experiment = await createExperiment({
+      lessonId: lesson.id,
+      type: config ? "MINI_GAME" : undefined,
+      config,
+    });
+    const beat = (now?: Date) =>
+      assertHeartbeatTargetIsReal(prisma, { studentId: student.id, type: "EXERCISE", refId: experiment.id, now });
+    return { student, lesson, experiment, beat };
+  }
+
+  it("rejects an accessible exercise that the student has not started", async () => {
+    const { beat } = await entitledExercise();
+    await expect(beat()).rejects.toThrow(/active exercise attempt/);
+  });
+
+  it("rejects a free lesson's exercise without an attempt, accepts it during one", async () => {
+    const student = await createStudent();
+    const lesson = await createLesson({ isFree: true });
+    await createVideo({ lessonId: lesson.id, isFree: true });
+    const experiment = await createExperiment({ lessonId: lesson.id });
+    const beat = () =>
+      assertHeartbeatTargetIsReal(prisma, { studentId: student.id, type: "EXERCISE", refId: experiment.id });
+    await expect(beat()).rejects.toThrow(/active exercise attempt/);
+    await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    await expect(beat()).resolves.toBeUndefined();
+  });
+
+  it("accepts heartbeats while an attempt is open and stops once it is completed", async () => {
+    const { student, experiment, beat } = await entitledExercise();
+    const attempt = await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    await expect(beat()).resolves.toBeUndefined();
+    await submitExperimentAttempt(prisma, {
+      attemptId: attempt.id,
+      studentId: student.id,
+      submission: { order: ["s1", "s2", "s3"] },
+    });
+    await expect(beat()).rejects.toThrow(/active exercise attempt/);
+  });
+
+  it("does not credit another student's open attempt", async () => {
+    const { lesson, experiment, student } = await entitledExercise();
+    await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    const other = await createStudent();
+    await createEntitlement({ studentId: other.id, lessonId: lesson.id });
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, { studentId: other.id, type: "EXERCISE", refId: experiment.id }),
+    ).rejects.toThrow(/active exercise attempt/);
+  });
+
+  it("stops crediting an attempt left open for hours", async () => {
+    const { student, experiment, beat } = await entitledExercise();
+    const attempt = await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    await expect(beat(new Date(attempt.startedAt.getTime() + 60 * 60_000))).resolves.toBeUndefined();
+    await expect(beat(new Date(attempt.startedAt.getTime() + 3 * 60 * 60_000))).rejects.toThrow(
+      /active exercise attempt/,
+    );
+  });
+
+  it("stops crediting a mini game once its round time is over", async () => {
+    const { student, experiment, beat } = await entitledExercise(MINI_GAME);
+    const attempt = await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    await expect(beat(new Date(attempt.startedAt.getTime() + 20_000))).resolves.toBeUndefined();
+    await expect(beat(new Date(attempt.startedAt.getTime() + 60_000))).rejects.toThrow(/active exercise attempt/);
+  });
+
+  it("restarting after an expired round closes it and opens a fresh attempt", async () => {
+    const { student, experiment, beat } = await entitledExercise(MINI_GAME);
+    const first = await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    await prisma.experimentAttempt.update({
+      where: { id: first.id },
+      data: { startedAt: new Date(Date.now() - 5 * 60_000) },
+    });
+    await expect(beat()).rejects.toThrow(/active exercise attempt/);
+
+    const second = await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    expect(second.id).not.toBe(first.id);
+    const closed = await prisma.experimentAttempt.findUniqueOrThrow({ where: { id: first.id } });
+    expect(closed.endedAt).not.toBeNull();
+    expect(closed.completedAt).toBeNull();
+    await expect(beat()).resolves.toBeUndefined();
+  });
+
+  it("rejects heartbeats once the lesson is unpublished, even mid-attempt", async () => {
+    const { student, lesson, experiment, beat } = await entitledExercise();
+    await startExperimentAttempt(prisma, { experimentId: experiment.id, studentId: student.id });
+    await prisma.lesson.update({ where: { id: lesson.id }, data: { status: "DRAFT" } });
+    await expect(beat()).rejects.toThrow(/access/);
   });
 });
 

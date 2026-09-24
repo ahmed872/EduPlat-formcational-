@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { generateShortCode } from "@/lib/id";
-import type { ContentStatus } from "@prisma/client";
+import type { ContentStatus, ExperimentType } from "@prisma/client";
 
 let counter = 0;
 function unique(prefix: string) {
@@ -107,17 +107,32 @@ export async function createSubscriptionPlan(overrides: {
   });
 }
 
+/** A three-step ordering activity whose correct order is s1, s2, s3. */
+export const ORDERING_CONFIG = {
+  v: 2,
+  activity: "ORDERING",
+  instructions: "رتّب الخطوات",
+  items: [
+    { id: "s1", label: "الخطوة الأولى" },
+    { id: "s2", label: "الخطوة الثانية" },
+    { id: "s3", label: "الخطوة الثالثة" },
+  ],
+  passPercent: 100,
+};
+
 export async function createExperiment(overrides: {
   lessonId: string;
   isRequired?: boolean;
   order?: number;
+  type?: ExperimentType;
+  config?: unknown;
 }) {
   return prisma.experiment.create({
     data: {
       lessonId: overrides.lessonId,
-      type: "INTERACTIVE",
+      type: overrides.type ?? "INTERACTIVE",
       title: unique("experiment"),
-      config: { instructions: "افعل كذا وكذا" },
+      config: (overrides.config ?? ORDERING_CONFIG) as never,
       order: overrides.order ?? 0,
       isRequired: overrides.isRequired ?? true,
     },

@@ -1,5 +1,7 @@
 import type { PrismaClient, StudyActivityType } from "@prisma/client";
 import { checkVideoAccess } from "@/lib/business/video-access";
+import { checkLessonAvailability } from "@/lib/business/content-visibility";
+import { attemptExpired, resolveExperiment } from "@/lib/experiments/definitions";
 
 /**
  * Any gap between heartbeats larger than this is treated as the student
@@ -26,7 +28,7 @@ function startOfDay(date: Date): Date {
  */
 export async function assertHeartbeatTargetIsReal(
   prisma: PrismaClient,
-  params: { studentId: string; type: StudyActivityType; refId: string },
+  params: { studentId: string; type: StudyActivityType; refId: string; now?: Date },
 ): Promise<void> {
   if (params.type === "VIDEO") {
     const decision = await checkVideoAccess(prisma, {
@@ -39,38 +41,31 @@ export async function assertHeartbeatTargetIsReal(
     return;
   }
 
-  // EXERCISE
+  // EXERCISE — the lesson must still be available to the student (entitled
+  // or free, published or archived-but-owned) AND the student must be in the
+  // middle of a live attempt of this very exercise. Time is only credited
+  // while an attempt is running, never for an exercise merely "opened".
   const experiment = await prisma.experiment.findUnique({
     where: { id: params.refId },
-    select: { lessonId: true },
+    select: { lessonId: true, type: true, config: true },
   });
   if (!experiment) {
     throw new Error("Cannot record study time for a non-existent exercise");
   }
-  const lesson = await prisma.lesson.findUnique({
-    where: { id: experiment.lessonId },
-    select: { isFree: true },
+  const availability = await checkLessonAvailability(prisma, {
+    studentId: params.studentId,
+    lessonId: experiment.lessonId,
   });
-  if (!lesson) {
-    throw new Error("Cannot record study time for a non-existent exercise");
-  }
-  if (lesson.isFree) return;
-
-  const now = new Date();
-  const entitled = await prisma.entitlement.findFirst({
-    where: {
-      studentId: params.studentId,
-      lessonId: experiment.lessonId,
-      revokedAt: null,
-      OR: [
-        { subscriptionId: { not: null }, subscription: { status: "ACTIVE", expiresAt: { gt: now } } },
-        { subscriptionId: null, expiresAt: null },
-        { subscriptionId: null, expiresAt: { gt: now } },
-      ],
-    },
-  });
-  if (!entitled) {
+  if (!availability.allowed) {
     throw new Error("Cannot record study time for an exercise you don't have access to");
+  }
+  const resolved = resolveExperiment(experiment);
+  const attempt = await prisma.experimentAttempt.findFirst({
+    where: { experimentId: params.refId, studentId: params.studentId, completedAt: null, endedAt: null },
+    orderBy: { startedAt: "desc" },
+  });
+  if (!resolved || !attempt || attemptExpired(resolved, attempt.startedAt, params.now ?? new Date())) {
+    throw new Error("Cannot record study time without an active exercise attempt");
   }
 }
 

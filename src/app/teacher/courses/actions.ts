@@ -7,7 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import { getVideoStorageProvider } from "@/lib/storage/provider";
 import { setContentStatus, type ContentKind } from "@/lib/business/content-status";
-import type { ContentStatus } from "@prisma/client";
+import type { ContentStatus, ExperimentType } from "@prisma/client";
+import { buildExperimentConfig } from "@/lib/experiments/definitions";
 
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024; // 500MB — matches next.config.ts server action body limit
@@ -200,59 +201,54 @@ export async function deleteVideoChapter(courseId: string, chapterId: string) {
   revalidatePath(`/teacher/courses/${courseId}`);
 }
 
-const EXPERIMENT_TYPES = new Set(["SIMULATION", "DRAG_AND_DROP", "MINI_GAME", "INTERACTIVE"]);
+const EXPERIMENT_TYPES = new Set<ExperimentType>(["SIMULATION", "DRAG_AND_DROP", "MINI_GAME", "INTERACTIVE"]);
 
+export type ExperimentFormState = { ok: boolean; message: string } | null;
+
+/**
+ * Creates an experiment from the type-specific editor. The fields are
+ * parsed and validated by the experiment registry (including the answer
+ * key, which is only ever stored server-side); errors go back to the form.
+ */
 export async function createExperiment(
   courseId: string,
   lessonId: string,
+  _prev: ExperimentFormState,
   formData: FormData,
-) {
+): Promise<ExperimentFormState> {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
-  const type = String(formData.get("type") ?? "");
+  const type = String(formData.get("type") ?? "") as ExperimentType;
   const title = String(formData.get("title") ?? "").trim();
-  const instructions = String(formData.get("instructions") ?? "").trim();
-  const stepsRaw = String(formData.get("steps") ?? "").trim();
-  const embedUrl = String(formData.get("embedUrl") ?? "").trim();
   const isRequired = formData.get("isRequired") === "on";
 
-  if (!EXPERIMENT_TYPES.has(type)) throw new Error("نوع التجربة غير صالح");
-  if (!title || !instructions) {
-    throw new Error("الرجاء إدخال عنوان التجربة وتعليماتها");
-  }
+  if (!EXPERIMENT_TYPES.has(type)) return { ok: false, message: "نوع التجربة غير صالح" };
+  if (!title) return { ok: false, message: "الرجاء إدخال عنوان التجربة" };
+  const lesson = await prisma.lesson.findFirst({ where: { id: lessonId, courseId }, select: { id: true } });
+  if (!lesson) return { ok: false, message: "الدرس غير موجود في هذا الكورس" };
 
-  const steps = stepsRaw
-    ? stepsRaw
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
+  let config: unknown;
+  try {
+    config = buildExperimentConfig(type, formData);
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
 
   const order = await prisma.experiment.count({ where: { lessonId } });
   await prisma.experiment.create({
-    data: {
-      lessonId,
-      type: type as never,
-      title,
-      order,
-      isRequired,
-      config: {
-        instructions,
-        steps,
-        embedUrl: embedUrl || undefined,
-      },
-    },
+    data: { lessonId, type, title, order, isRequired, config: config as never },
   });
 
   revalidatePath(`/teacher/courses/${courseId}`);
+  return { ok: true, message: "تمت إضافة التجربة" };
 }
 
 export async function deleteExperiment(courseId: string, experimentId: string) {
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
-  await prisma.experiment.delete({ where: { id: experimentId } });
+  await prisma.experiment.deleteMany({ where: { id: experimentId, lesson: { courseId } } });
 
   revalidatePath(`/teacher/courses/${courseId}`);
 }
