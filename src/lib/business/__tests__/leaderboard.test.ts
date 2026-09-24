@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createStudent } from "@/test/factories";
+import { createStudent, createTeacher } from "@/test/factories";
 import {
   approveHallOfFameEntry,
   generateHallOfFameCandidates,
@@ -136,7 +136,7 @@ describe("Hall of Fame", () => {
     await endedSession({ gameId: game.id, studentId: student.id, score: 20, startedAt: inMonth });
 
     const [candidate] = await generateHallOfFameCandidates(prisma, { month: "2026-06" });
-    await approveHallOfFameEntry(prisma, { entryId: candidate.id, approvedById: "teacher-1" });
+    await approveHallOfFameEntry(prisma, { entryId: candidate.id, approvedById: (await createTeacher()).id });
 
     const approved = await getApprovedHallOfFame(prisma, "2026-06");
     expect(approved).toHaveLength(1);

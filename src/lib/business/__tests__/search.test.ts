@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createCourse, createLesson, createVideo } from "@/test/factories";
+import { createCourse, createLesson, createTeacher, createVideo } from "@/test/factories";
 import { searchForStudent, searchForTeacher } from "@/lib/business/search";
 
 beforeEach(async () => {
@@ -20,7 +20,7 @@ describe("searchForStudent", () => {
       data: {
         title: "أساسيات الفيزياء",
         categoryId: (await prisma.category.create({ data: { name: "علوم", slug: "sci-1" } })).id,
-        teacherId: "t1",
+        teacherId: (await createTeacher()).id,
         academicYear: "2026",
         status: "PUBLISHED",
       },
@@ -36,7 +36,7 @@ describe("searchForStudent", () => {
       data: {
         title: "كورس مسودة سري",
         categoryId: (await prisma.category.create({ data: { name: "ق", slug: "cat-2" } })).id,
-        teacherId: "t1",
+        teacherId: (await createTeacher()).id,
         academicYear: "2026",
         status: "DRAFT",
       },
@@ -90,7 +90,7 @@ describe("searchForTeacher", () => {
       data: {
         title: "كورس مسودة للمعلم فقط",
         categoryId: (await prisma.category.create({ data: { name: "ق2", slug: "cat-3" } })).id,
-        teacherId: "t1",
+        teacherId: (await createTeacher()).id,
         academicYear: "2026",
         status: "DRAFT",
       },
@@ -114,7 +114,7 @@ describe("searchForTeacher", () => {
 
   it("finds a question bank by name", async () => {
     const bank = await prisma.questionBank.create({
-      data: { name: "بنك أسئلة الكيمياء الفريد", teacherId: "t1" },
+      data: { name: "بنك أسئلة الكيمياء الفريد", teacherId: (await createTeacher()).id },
     });
 
     const results = await searchForTeacher(prisma, "الكيمياء الفريد");

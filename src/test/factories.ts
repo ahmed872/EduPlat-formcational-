@@ -57,13 +57,15 @@ export async function createCategory() {
 }
 
 export async function createCourse(
-  overrides: { categoryId?: string; status?: ContentStatus } = {},
+  overrides: { categoryId?: string; status?: ContentStatus; teacherId?: string } = {},
 ) {
   const categoryId = overrides.categoryId ?? (await createCategory()).id;
+  // Course.teacherId is a real foreign key to User.
+  const teacherId = overrides.teacherId ?? (await createTeacher()).id;
   return prisma.course.create({
     data: {
       categoryId,
-      teacherId: "test-teacher",
+      teacherId,
       title: unique("course"),
       academicYear: "2026",
       status: overrides.status ?? "PUBLISHED",

@@ -24,6 +24,11 @@ export async function createPendingReferralReward(
   const rewardDays = await getPlatformSetting<number>(
     PLATFORM_SETTING_KEYS.REFERRAL_REWARD_DAYS,
   );
+  // rewardValue is a whole number of days (Int column) — a misconfigured
+  // setting fails loudly here instead of being rounded silently.
+  if (!Number.isInteger(rewardDays) || rewardDays <= 0) {
+    throw new Error(`Invalid ${PLATFORM_SETTING_KEYS.REFERRAL_REWARD_DAYS} setting: must be a positive whole number of days`);
+  }
 
   return prisma.referralReward.create({
     data: {

@@ -35,6 +35,7 @@ model User {
   blockedReason String?
   blockedAt     DateTime?
   blockedById   String?
+  blockedBy     User?      @relation("UserBlockedBy", fields: [blockedById], references: [id], onDelete: Restrict)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -47,6 +48,17 @@ model User {
   supportTicketsAuthored SupportTicket[]      @relation("TicketAuthor")
   supportReplies         SupportTicketReply[]
   announcementsSent      Announcement[]
+
+  // Who-did-what references. All RESTRICT: a user that owns content or is
+  // named on an audit-relevant row can't be hard-deleted out from under it
+  // (accounts are blocked, never deleted — see security.ts).
+  blockedUsers        User[]            @relation("UserBlockedBy")
+  coursesTaught       Course[]          @relation("CourseTeacher")
+  questionBanks       QuestionBank[]    @relation("QuestionBankTeacher")
+  reviewedAnswers     QuizAnswer[]      @relation("QuizAnswerReviewer")
+  grantedEntitlements Entitlement[]     @relation("EntitlementGrantedBy")
+  confirmedPayments   Payment[]         @relation("PaymentConfirmedBy")
+  approvedHallOfFame  HallOfFameEntry[] @relation("HallOfFameApprover")
 
   @@index([role])
 }
@@ -162,6 +174,7 @@ model Course {
   categoryId   String
   category     Category      @relation(fields: [categoryId], references: [id])
   teacherId    String
+  teacher      User          @relation("CourseTeacher", fields: [teacherId], references: [id], onDelete: Restrict)
   title        String
   description  String?
   thumbnailUrl String?
@@ -389,6 +402,7 @@ model QuestionBank {
   name        String
   description String?
   teacherId   String
+  teacher     User     @relation("QuestionBankTeacher", fields: [teacherId], references: [id], onDelete: Restrict)
   createdAt   DateTime @default(now())
 
   questions Question[]
@@ -499,6 +513,7 @@ model QuizAnswer {
   manualFeedback String?
   reviewedAt     DateTime?
   reviewedById   String?
+  reviewedBy     User?       @relation("QuizAnswerReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
 
   @@unique([attemptId, questionId])
 }
@@ -583,11 +598,16 @@ model Entitlement {
   promoRedemptionId String?
   promoRedemption   PromoRedemption?  @relation(fields: [promoRedemptionId], references: [id])
   lessonId          String?
-  lesson            Lesson?           @relation(fields: [lessonId], references: [id])
+  // RESTRICT (not the implicit SET NULL): deleting a lesson/video that
+  // students hold entitlements to must fail instead of silently turning
+  // their grants into rows that point at nothing. Unpublish/archive only
+  // change status and are unaffected.
+  lesson            Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Restrict)
   videoId           String?
-  video             Video?            @relation(fields: [videoId], references: [id])
+  video             Video?            @relation(fields: [videoId], references: [id], onDelete: Restrict)
   reason            EntitlementReason
   grantedById       String? // set when reason = ADMIN_GRANT
+  grantedBy         User?             @relation("EntitlementGrantedBy", fields: [grantedById], references: [id], onDelete: Restrict)
   grantedAt         DateTime          @default(now())
   expiresAt         DateTime? // only meaningful for non-subscription grants (PROMO FREE_PERIOD / time-boxed ADMIN_GRANT); subscription-backed grants rely on Subscription.expiresAt instead
   revokedAt         DateTime?
@@ -622,6 +642,7 @@ model Payment {
   createdAt           DateTime      @default(now())
   verifiedAt          DateTime?
   confirmedById       String? // teacher/admin who manually confirmed receipt, when applicable
+  confirmedBy         User?         @relation("PaymentConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
   failureReason       String?
 
   @@index([subscriptionId])
@@ -791,19 +812,19 @@ model Game {
 }
 
 model GameSession {
-  id        String         @id @default(cuid())
-  gameId    String
-  game      Game           @relation(fields: [gameId], references: [id])
-  studentId String
-  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  startedAt DateTime       @default(now())
-  endedAt   DateTime?
-  score     Int            @default(0)
+  id             String         @id @default(cuid())
+  gameId         String
+  game           Game           @relation(fields: [gameId], references: [id])
+  studentId      String
+  student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  startedAt      DateTime       @default(now())
+  endedAt        DateTime?
+  score          Int            @default(0)
   // Date-only (time truncated to midnight), set only for DAILY_MAIN sessions
   // — backs the real "one play per day" constraint below. Left null for
   // MINI sessions (always replayable), which never collide with each other
   // since Postgres treats each NULL as distinct for uniqueness purposes.
-  playDate  DateTime?
+  playDate       DateTime?
   // MINI only: floor(startedAt.getTime() / (game.miniCooldownMinutes * 60_000))
   // at the moment the session was created — a discrete "which cooldown
   // window was this play in" bucket, backing a real DB-level "at most one
@@ -852,6 +873,7 @@ model HallOfFameEntry {
   photoUrl     String?
   approved     Boolean        @default(false)
   approvedById String?
+  approvedBy   User?          @relation("HallOfFameApprover", fields: [approvedById], references: [id], onDelete: Restrict)
   approvedAt   DateTime?
   createdAt    DateTime       @default(now())
 
@@ -1114,17 +1136,22 @@ model Certificate {
 // REFERRALS
 // =========================================================================
 
+enum ReferralRewardType {
+  SUBSCRIPTION_EXTENSION_DAYS
+}
+
 model ReferralReward {
-  id                String         @id @default(cuid())
+  id                String             @id @default(cuid())
   referrerStudentId String
-  referrer          StudentProfile @relation("Referrer", fields: [referrerStudentId], references: [id], onDelete: Cascade)
+  referrer          StudentProfile     @relation("Referrer", fields: [referrerStudentId], references: [id], onDelete: Cascade)
   referredStudentId String
-  referred          StudentProfile @relation("Referred", fields: [referredStudentId], references: [id], onDelete: Cascade)
-  rewardType        String
-  rewardValue       Float
+  referred          StudentProfile     @relation("Referred", fields: [referredStudentId], references: [id], onDelete: Cascade)
+  rewardType        ReferralRewardType
+  /// Whole units of rewardType (days for SUBSCRIPTION_EXTENSION_DAYS).
+  rewardValue       Int
   appliedAt         DateTime?
   expiresAt         DateTime?
-  createdAt         DateTime       @default(now())
+  createdAt         DateTime           @default(now())
 
   @@unique([referredStudentId])
   @@index([referrerStudentId])

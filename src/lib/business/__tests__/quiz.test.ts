@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
-import { createEntitlement, createLesson, createStudent } from "@/test/factories";
+import { createEntitlement, createLesson, createStudent, createTeacher } from "@/test/factories";
 import { createQuestion, createQuiz } from "@/test/factories-quiz";
 import {
   canAccessLesson,
@@ -156,7 +156,7 @@ describe("quiz grading and lesson unlocking", () => {
     await gradeManualAnswer(prisma, {
       answerId: savedAnswer.id,
       pointsAwarded: 1,
-      reviewerId: "teacher-1",
+      reviewerId: (await createTeacher()).id,
     });
 
     const finalAttempt = await prisma.quizAttempt.findUniqueOrThrow({
