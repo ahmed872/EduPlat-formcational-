@@ -35,6 +35,15 @@ export default async function SubscribePage() {
           <strong>وقت الاشتراك</strong>. أي محتوى ينشر لاحقًا لا يُضاف
           تلقائيًا.
         </p>
+        <p
+          data-testid="manual-payment-notice"
+          className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+        >
+          الدفع يدوي خارج المنصة: لا توجد بوابة دفع إلكترونية، ولن يُخصم أي مبلغ هنا.
+          بعد الضغط على «اشترك الآن» حوّل المبلغ بالطريقة التي يحددها المعلم
+          (تحويل بنكي / محفظة / نقدًا)، ويُفعَّل الاشتراك فقط بعد أن تؤكد
+          الإدارة استلام المبلغ. تابع الحالة في «سجل المدفوعات».
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
