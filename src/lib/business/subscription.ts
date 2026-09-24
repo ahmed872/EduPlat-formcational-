@@ -42,6 +42,22 @@ export async function computeAcademicYearExpiry(): Promise<Date> {
   return date;
 }
 
+const OPEN_SUBSCRIPTION_MESSAGE = "لديك اشتراك قائم أو بانتظار تأكيد الدفع لهذه الخطة بالفعل";
+
+async function assertNoOpenSubscription(
+  prisma: PrismaClient,
+  params: { studentId: string; planId: string },
+) {
+  const open = await prisma.subscription.count({
+    where: {
+      studentId: params.studentId,
+      planId: params.planId,
+      OR: [{ status: "PENDING_PAYMENT" }, { status: "ACTIVE", expiresAt: { gt: new Date() } }],
+    },
+  });
+  if (open > 0) throw new Error(OPEN_SUBSCRIPTION_MESSAGE);
+}
+
 /**
  * Starts a subscription purchase. Never marks a non-zero payment as paid —
  * that only happens through confirmPayment(), performed by a
@@ -60,6 +76,21 @@ export async function startSubscriptionCheckout(
   if (!plan.active) {
     throw new Error("This subscription plan is not currently available");
   }
+
+  // Never sell access that would already be over: if the admin hasn't set
+  // the next academic-year end yet, stop here — before a promo is used or a
+  // payment is recorded — instead of taking money for a dead subscription.
+  const expiresAt = await computeAcademicYearExpiry();
+  if (expiresAt.getTime() <= Date.now()) {
+    throw new Error(
+      "انتهى العام الدراسي المحدد في إعدادات المنصة — لا يمكن بدء اشتراك جديد حتى تضبط الإدارة تاريخ نهاية العام الدراسي التالي.",
+    );
+  }
+
+  // The UI hides "subscribe" once a subscription for this plan is pending or
+  // active; enforce the same rule server-side so a replayed request can't
+  // open a second one (and invite a second manual payment).
+  await assertNoOpenSubscription(prisma, params);
 
   let promo: PromoCode | null = null;
   let promoIdForRecord: string | null = null;
@@ -83,7 +114,6 @@ export async function startSubscriptionCheckout(
 
   const originalAmountCents = plan.priceCents;
   const amountCents = promo ? applyDiscount(originalAmountCents, promo) : originalAmountCents;
-  const expiresAt = await computeAcademicYearExpiry();
   const provider = getActivePaymentProvider(amountCents);
   const intent = await provider.createIntent({
     amountCents,
@@ -96,6 +126,10 @@ export async function startSubscriptionCheckout(
   // subscription with no payment record at all — inconsistent state with
   // no automatic rollback.
   const { subscription, payment } = await prisma.$transaction(async (tx) => {
+    // Serialize concurrent checkouts of the same plan by the same student
+    // and re-check under the lock — the pre-check above is only a fast path.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`checkout:${params.studentId}:${plan.id}`}))`;
+    await assertNoOpenSubscription(tx as unknown as PrismaClient, params);
     const subscription = await tx.subscription.create({
       data: {
         studentId: params.studentId,
