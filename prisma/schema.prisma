@@ -957,7 +957,15 @@ model Notification {
   metadata  Json?
   readAt    DateTime?
   createdAt DateTime  @default(now())
+  // Set only for notifications that must fire at most once per logical
+  // event (e.g. "TARGET_REACHED:DAILY:2026-09-24"). Backs a real DB-level
+  // once-only guarantee via the unique index below — a read-then-create
+  // check alone let two concurrent heartbeats both notify. NULL (the
+  // default) for every other notification, which never collide since
+  // Postgres treats each NULL as distinct.
+  dedupeKey String?
 
+  @@unique([userId, dedupeKey])
   @@index([userId, readAt])
 }
 
