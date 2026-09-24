@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
-import { updateTeacherProfile } from "@/lib/business/teacher-profile";
+import {
+  parseLocations,
+  parseSocialLinks,
+  updateTeacherProfile,
+} from "@/lib/business/teacher-profile";
 
 export async function saveProfile(formData: FormData) {
   const session = await auth();
@@ -17,7 +21,15 @@ export async function saveProfile(formData: FormData) {
     education: String(formData.get("education") ?? "").trim() || null,
     experience: String(formData.get("experience") ?? "").trim() || null,
     philosophy: String(formData.get("philosophy") ?? "").trim() || null,
+    socialLinks: parseSocialLinks(String(formData.get("socialLinks") ?? "")),
+    contactInfo: {
+      email: String(formData.get("contactEmail") ?? ""),
+      phone: String(formData.get("contactPhone") ?? ""),
+      whatsapp: String(formData.get("contactWhatsapp") ?? ""),
+    },
+    locations: parseLocations(String(formData.get("locations") ?? "")),
   });
 
   revalidatePath("/teacher/profile");
+  revalidatePath(`/teachers/${session.user.id}`);
 }

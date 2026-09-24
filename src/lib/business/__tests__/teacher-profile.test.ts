@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
 import { createCategory } from "@/test/factories";
-import { getTeacherProfile, updateTeacherProfile } from "@/lib/business/teacher-profile";
+import {
+  getTeacherProfile,
+  parseLocations,
+  parseSocialLinks,
+  readContactInfo,
+  readLocations,
+  readSocialLinks,
+  updateTeacherProfile,
+} from "@/lib/business/teacher-profile";
 
 beforeEach(async () => {
   await resetDatabase();
@@ -80,5 +88,108 @@ describe("updateTeacherProfile", () => {
     expect(count).toBe(1);
     const { profile } = await getTeacherProfile(prisma, teacher.id);
     expect(profile?.bio).toBe("نسخة محدثة");
+  });
+});
+
+// Final audit gap #7: socialLinks/contactInfo/locations existed as real
+// schema columns but had no edit path and no public display at all.
+describe("TeacherProfile socialLinks / contactInfo / locations", () => {
+  it("saves all three and reads them back for the public profile", async () => {
+    const teacher = await createTeacherUser();
+
+    await updateTeacherProfile(prisma, {
+      userId: teacher.id,
+      bio: "معلم",
+      socialLinks: parseSocialLinks("YouTube | https://youtube.com/@t\nFacebook | https://facebook.com/t"),
+      contactInfo: { email: "t@example.com", phone: "+20 100 123 4567", whatsapp: "" },
+      locations: parseLocations("سنتر النور | شارع الجامعة | السبت 4م\nأونلاين"),
+    });
+
+    const { profile } = await getTeacherProfile(prisma, teacher.id);
+    expect(readSocialLinks(profile!.socialLinks)).toEqual([
+      { platform: "YouTube", url: "https://youtube.com/@t" },
+      { platform: "Facebook", url: "https://facebook.com/t" },
+    ]);
+    expect(readContactInfo(profile!.contactInfo)).toEqual({
+      email: "t@example.com",
+      phone: "+20 100 123 4567",
+      whatsapp: null,
+    });
+    expect(readLocations(profile!.locations)).toEqual([
+      { name: "سنتر النور", address: "شارع الجامعة", schedule: "السبت 4م" },
+      { name: "أونلاين", address: null, schedule: null },
+    ]);
+  });
+
+  it("clears the fields back to NULL when emptied", async () => {
+    const teacher = await createTeacherUser();
+    await updateTeacherProfile(prisma, {
+      userId: teacher.id,
+      socialLinks: parseSocialLinks("X | https://x.com/t"),
+      contactInfo: { email: "t@example.com", phone: null, whatsapp: null },
+      locations: parseLocations("سنتر"),
+    });
+
+    await updateTeacherProfile(prisma, {
+      userId: teacher.id,
+      socialLinks: [],
+      contactInfo: { email: "", phone: "", whatsapp: "" },
+      locations: [],
+    });
+
+    const stored = await prisma.teacherProfile.findUniqueOrThrow({ where: { userId: teacher.id } });
+    expect(stored.socialLinks).toBeNull();
+    expect(stored.contactInfo).toBeNull();
+    expect(stored.locations).toBeNull();
+  });
+
+  it("rejects a javascript:/non-http social link, even when passed straight to the business function", async () => {
+    const teacher = await createTeacherUser();
+    await expect(
+      updateTeacherProfile(prisma, {
+        userId: teacher.id,
+        socialLinks: [{ platform: "x", url: "javascript:alert(document.cookie)" }],
+      }),
+    ).rejects.toThrow(/http/);
+    expect(() => parseSocialLinks("no separator here")).toThrow();
+    expect(await prisma.teacherProfile.count({ where: { userId: teacher.id } })).toBe(0);
+  });
+
+  it("rejects a malformed email or phone number", async () => {
+    const teacher = await createTeacherUser();
+    await expect(
+      updateTeacherProfile(prisma, {
+        userId: teacher.id,
+        contactInfo: { email: "not-an-email", phone: null, whatsapp: null },
+      }),
+    ).rejects.toThrow(/البريد/);
+    await expect(
+      updateTeacherProfile(prisma, {
+        userId: teacher.id,
+        contactInfo: { email: null, phone: "javascript:alert(1)", whatsapp: null },
+      }),
+    ).rejects.toThrow(/الهاتف/);
+  });
+
+  it("rejects a location line with no name", () => {
+    expect(() => parseLocations("x")).not.toThrow();
+    return expect(
+      updateTeacherProfile(prisma, {
+        userId: "unused",
+        locations: [{ name: "", address: "عنوان", schedule: null }],
+      }),
+    ).rejects.toThrow(/اسم مكان/);
+  });
+
+  it("read* helpers drop unsafe or malformed stored values instead of rendering them", () => {
+    expect(
+      readSocialLinks([
+        { platform: "ok", url: "https://ok.example" },
+        { platform: "bad", url: "javascript:alert(1)" },
+        42,
+      ]),
+    ).toEqual([{ platform: "ok", url: "https://ok.example" }]);
+    expect(readContactInfo({ email: "bad", phone: "javascript:x" })).toBeNull();
+    expect(readLocations("not an array")).toEqual([]);
   });
 });

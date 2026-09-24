@@ -1,11 +1,19 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { getTeacherProfile } from "@/lib/business/teacher-profile";
+import {
+  getTeacherProfile,
+  readContactInfo,
+  readLocations,
+  readSocialLinks,
+} from "@/lib/business/teacher-profile";
 import { saveProfile } from "./actions";
 
 export default async function TeacherProfilePage() {
   const session = await auth();
   const { profile, courses } = await getTeacherProfile(prisma, session!.user.id);
+  const socialLinks = readSocialLinks(profile?.socialLinks);
+  const contactInfo = readContactInfo(profile?.contactInfo);
+  const locations = readLocations(profile?.locations);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
@@ -62,6 +70,68 @@ export default async function TeacherProfilePage() {
             name="philosophy"
             rows={2}
             defaultValue={profile?.philosophy ?? ""}
+            className="rounded-md border border-gray-300 px-3 py-2"
+          />
+        </label>
+
+        <fieldset className="flex flex-col gap-3 border-t border-gray-100 pt-3">
+          <legend className="text-sm font-semibold text-gray-700">معلومات التواصل (تظهر علنًا)</legend>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">البريد الإلكتروني</span>
+            <input
+              name="contactEmail"
+              type="email"
+              dir="ltr"
+              defaultValue={contactInfo?.email ?? ""}
+              className="rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">رقم الهاتف</span>
+            <input
+              name="contactPhone"
+              type="tel"
+              dir="ltr"
+              defaultValue={contactInfo?.phone ?? ""}
+              className="rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">رقم واتساب</span>
+            <input
+              name="contactWhatsapp"
+              type="tel"
+              dir="ltr"
+              defaultValue={contactInfo?.whatsapp ?? ""}
+              className="rounded-md border border-gray-300 px-3 py-2"
+            />
+          </label>
+        </fieldset>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-gray-600">
+            روابط التواصل الاجتماعي (سطر لكل رابط: المنصة | الرابط)
+          </span>
+          <textarea
+            name="socialLinks"
+            rows={3}
+            dir="ltr"
+            defaultValue={socialLinks.map((l) => `${l.platform} | ${l.url}`).join("\n")}
+            placeholder="YouTube | https://youtube.com/@teacher"
+            className="rounded-md border border-gray-300 px-3 py-2"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-gray-600">
+            أماكن ومواعيد التدريس (سطر لكل مكان: الاسم | العنوان | المواعيد)
+          </span>
+          <textarea
+            name="locations"
+            rows={3}
+            defaultValue={locations
+              .map((l) => [l.name, l.address ?? "", l.schedule ?? ""].join(" | "))
+              .join("\n")}
+            placeholder="سنتر النور | شارع الجامعة | السبت والثلاثاء 4م"
             className="rounded-md border border-gray-300 px-3 py-2"
           />
         </label>
