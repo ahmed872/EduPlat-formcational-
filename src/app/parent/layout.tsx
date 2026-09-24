@@ -11,7 +11,7 @@ export default async function ParentLayout({ children }: { children: ReactNode }
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 print:hidden">
         <div className="flex items-center gap-4">
           <h1 className="text-sm font-medium">لوحة ولي الأمر</h1>
           <Link href="/parent/support" className="text-sm text-gray-500 hover:underline">

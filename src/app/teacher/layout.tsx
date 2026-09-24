@@ -51,7 +51,7 @@ export default async function TeacherLayout({
 
   return (
     <div className="flex min-h-screen">
-      <aside className="w-64 shrink-0 border-l border-gray-200 bg-white p-4">
+      <aside className="w-64 shrink-0 border-l border-gray-200 bg-white p-4 print:hidden">
         <p className="mb-6 text-sm text-gray-500">
           مرحبًا، {session?.user.name}
         </p>

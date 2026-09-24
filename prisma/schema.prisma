@@ -1099,7 +1099,13 @@ model Certificate {
   courseId        String
   course          Course         @relation(fields: [courseId], references: [id])
   issuedAt        DateTime       @default(now())
+  /// Public, random (10 chars from a 32-letter alphabet ≈ 50 bits) — the
+  /// only thing the verification URL / QR code carries.
   certificateCode String         @unique
+  /// Set when a teacher revokes the certificate; the public verification
+  /// page then reports it as revoked instead of valid.
+  revokedAt       DateTime?
+  revokedReason   String?
 
   @@unique([studentId, courseId])
 }
