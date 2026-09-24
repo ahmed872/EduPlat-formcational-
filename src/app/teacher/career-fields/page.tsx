@@ -1,6 +1,121 @@
+import type { CareerField } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { CAREER_TRAITS, CAREER_TRAIT_LABELS } from "@/lib/business/career-guidance";
-import { createCareerField, deleteCareerField } from "./actions";
+import {
+  CAREER_TRAITS,
+  CAREER_TRAIT_LABELS,
+  readResources,
+  readRoadmap,
+} from "@/lib/business/career-guidance";
+import { createCareerField, deleteCareerField, updateCareerField } from "./actions";
+
+function CareerFieldFormFields({ field }: { field?: CareerField }) {
+  const roadmap = field ? readRoadmap(field.roadmap) : [];
+  const resources = field ? readResources(field.resources) : [];
+
+  return (
+    <>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">الاسم</span>
+        <input
+          name="name"
+          required
+          defaultValue={field?.name}
+          placeholder="هندسة البرمجيات"
+          className="min-w-56 rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">الوصف</span>
+        <textarea
+          name="description"
+          required
+          rows={2}
+          defaultValue={field?.description}
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">وظائف شائعة (مفصولة بفواصل)</span>
+        <input
+          name="commonJobs"
+          defaultValue={field?.commonJobs.join(", ")}
+          placeholder="مطور واجهات, مهندس نظم"
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">مهارات مطلوبة (مفصولة بفواصل)</span>
+        <input
+          name="requiredSkills"
+          defaultValue={field?.requiredSkills.join(", ")}
+          placeholder="حل المشكلات, البرمجة"
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className="text-sm text-gray-600">
+          السمات التي يطابقها اختبار استكشاف الميول
+        </legend>
+        <div className="flex flex-wrap gap-3">
+          {CAREER_TRAITS.map((trait) => (
+            <label key={trait} className="flex items-center gap-1.5 text-sm">
+              <input
+                type="checkbox"
+                name="traits"
+                value={trait}
+                defaultChecked={field?.traits.includes(trait)}
+                className="rounded border-gray-300"
+              />
+              {CAREER_TRAIT_LABELS[trait]}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">خارطة الطريق (خطوة في كل سطر، اختياري)</span>
+        <textarea
+          name="roadmap"
+          rows={3}
+          defaultValue={roadmap.join("\n")}
+          placeholder={"تعلّم أساسيات البرمجة\nابنِ مشروعًا صغيرًا"}
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">
+          مصادر تعليمية (سطر لكل مصدر: العنوان | الرابط، اختياري)
+        </span>
+        <textarea
+          name="resources"
+          rows={3}
+          dir="ltr"
+          defaultValue={resources.map((r) => `${r.title} | ${r.url}`).join("\n")}
+          placeholder="CS50 | https://cs50.harvard.edu"
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">نصيحة لبناء ملف أعمال (اختياري)</span>
+        <input
+          name="portfolioAdvice"
+          defaultValue={field?.portfolioAdvice ?? ""}
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm text-gray-600">نصيحة للاستعداد للوظيفة (اختياري)</span>
+        <input
+          name="jobPrepAdvice"
+          defaultValue={field?.jobPrepAdvice ?? ""}
+          className="rounded-md border border-gray-300 px-3 py-2"
+        />
+      </label>
+    </>
+  );
+}
 
 export default async function TeacherCareerFieldsPage() {
   const fields = await prisma.careerField.findMany({ orderBy: { order: "asc" } });
@@ -21,58 +136,7 @@ export default async function TeacherCareerFieldsPage() {
         className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
       >
         <h2 className="font-semibold">إضافة مجال جديد</h2>
-        <div className="flex flex-wrap gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-gray-600">الاسم</span>
-            <input
-              name="name"
-              required
-              placeholder="هندسة البرمجيات"
-              className="min-w-56 rounded-md border border-gray-300 px-3 py-2"
-            />
-          </label>
-        </div>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-600">الوصف</span>
-          <textarea
-            name="description"
-            required
-            rows={2}
-            className="rounded-md border border-gray-300 px-3 py-2"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-600">وظائف شائعة (مفصولة بفواصل)</span>
-          <input name="commonJobs" placeholder="مطور واجهات, مهندس نظم" className="rounded-md border border-gray-300 px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-600">مهارات مطلوبة (مفصولة بفواصل)</span>
-          <input name="requiredSkills" placeholder="حل المشكلات, البرمجة" className="rounded-md border border-gray-300 px-3 py-2" />
-        </label>
-
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm text-gray-600">
-            السمات التي يطابقها اختبار استكشاف الميول
-          </legend>
-          <div className="flex flex-wrap gap-3">
-            {CAREER_TRAITS.map((trait) => (
-              <label key={trait} className="flex items-center gap-1.5 text-sm">
-                <input type="checkbox" name="traits" value={trait} className="rounded border-gray-300" />
-                {CAREER_TRAIT_LABELS[trait]}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-600">نصيحة لبناء ملف أعمال (اختياري)</span>
-          <input name="portfolioAdvice" className="rounded-md border border-gray-300 px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-600">نصيحة للاستعداد للوظيفة (اختياري)</span>
-          <input name="jobPrepAdvice" className="rounded-md border border-gray-300 px-3 py-2" />
-        </label>
-
+        <CareerFieldFormFields />
         <button
           type="submit"
           className="w-fit rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700"
@@ -83,7 +147,11 @@ export default async function TeacherCareerFieldsPage() {
 
       <div className="flex flex-col gap-3">
         {fields.map((field) => (
-          <div key={field.id} className="rounded-lg border border-gray-200 bg-white p-4">
+          <div
+            key={field.id}
+            data-career-field={field.id}
+            className="rounded-lg border border-gray-200 bg-white p-4"
+          >
             <div className="flex items-start justify-between">
               <div>
                 <p className="font-semibold">{field.name}</p>
@@ -111,6 +179,26 @@ export default async function TeacherCareerFieldsPage() {
                 لا توجد سمات محددة — لن يظهر هذا المجال أبدًا في نتائج اختبار الاستكشاف.
               </p>
             )}
+            <p className="mt-2 text-xs text-gray-500">
+              خارطة الطريق: {readRoadmap(field.roadmap).length} خطوة · المصادر:{" "}
+              {readResources(field.resources).length}
+            </p>
+
+            <details className="mt-3 border-t border-gray-100 pt-3">
+              <summary className="cursor-pointer text-sm text-indigo-600">تعديل</summary>
+              <form
+                action={updateCareerField.bind(null, field.id)}
+                className="mt-3 flex flex-col gap-3"
+              >
+                <CareerFieldFormFields field={field} />
+                <button
+                  type="submit"
+                  className="w-fit rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700"
+                >
+                  حفظ التعديلات
+                </button>
+              </form>
+            </details>
           </div>
         ))}
         {fields.length === 0 && (

@@ -4,6 +4,8 @@ import {
   CAREER_QUIZ_QUESTIONS,
   getCareerExplorationHistory,
   listCareerFields,
+  readResources,
+  readRoadmap,
 } from "@/lib/business/career-guidance";
 import { submitQuiz } from "./actions";
 
@@ -110,6 +112,35 @@ export default async function StudentCareerGuidancePage() {
                 <p className="mt-1 text-xs text-gray-500">
                   مهارات مطلوبة: {field.requiredSkills.join("، ")}
                 </p>
+              )}
+              {readRoadmap(field.roadmap).length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold text-gray-700">خارطة الطريق</p>
+                  <ol className="mt-1 list-decimal ps-5 text-xs text-gray-700">
+                    {readRoadmap(field.roadmap).map((step, i) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+              {readResources(field.resources).length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold text-gray-700">مصادر تعليمية</p>
+                  <ul className="mt-1 flex flex-col gap-0.5 text-xs">
+                    {readResources(field.resources).map((resource, i) => (
+                      <li key={i}>
+                        <a
+                          href={resource.url}
+                          target="_blank"
+                          rel="noopener noreferrer nofollow"
+                          className="text-indigo-600 hover:underline"
+                        >
+                          {resource.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {field.portfolioAdvice && (
                 <p className="mt-2 text-xs text-gray-700">📁 {field.portfolioAdvice}</p>

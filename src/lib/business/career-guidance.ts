@@ -171,3 +171,122 @@ export async function getCareerExplorationHistory(prisma: PrismaClient, studentI
 export async function listCareerFields(prisma: PrismaClient) {
   return prisma.careerField.findMany({ orderBy: { order: "asc" } });
 }
+
+/** An ordered list of steps, e.g. "تعلّم أساسيات البرمجة" → "ابنِ مشروعًا صغيرًا". */
+export type CareerRoadmap = string[];
+export type CareerResource = { title: string; url: string };
+
+export type CareerFieldInput = {
+  name: string;
+  description: string;
+  commonJobs: string[];
+  requiredSkills: string[];
+  traits: string[];
+  roadmap: CareerRoadmap;
+  resources: CareerResource[];
+  portfolioAdvice: string | null;
+  jobPrepAdvice: string | null;
+};
+
+/** One roadmap step per non-empty line. */
+export function parseRoadmap(raw: string): CareerRoadmap {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/**
+ * One resource per non-empty line, as `title | url`. Resources are rendered
+ * to students as clickable links, so only real http(s) URLs are accepted —
+ * a `javascript:` (or any other scheme) URL is rejected outright rather
+ * than stored and later rendered into an `href`.
+ */
+export function parseResources(raw: string): CareerResource[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.lastIndexOf("|");
+      if (separator === -1) {
+        throw new Error(`صيغة المصدر غير صحيحة (المطلوب: العنوان | الرابط): ${line}`);
+      }
+      const title = line.slice(0, separator).trim();
+      const url = line.slice(separator + 1).trim();
+      if (!title || !isSafeHttpUrl(url)) {
+        throw new Error(`رابط المصدر يجب أن يبدأ بـ http:// أو https://: ${line}`);
+      }
+      return { title, url };
+    });
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Defensive readers for the Json columns — never trust their stored shape blindly. */
+export function readRoadmap(value: unknown): CareerRoadmap {
+  return Array.isArray(value) ? value.filter((s): s is string => typeof s === "string") : [];
+}
+
+export function readResources(value: unknown): CareerResource[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (r): r is CareerResource =>
+      typeof r === "object" &&
+      r !== null &&
+      typeof (r as CareerResource).title === "string" &&
+      typeof (r as CareerResource).url === "string" &&
+      isSafeHttpUrl((r as CareerResource).url),
+  );
+}
+
+function validateCareerFieldInput(input: CareerFieldInput): CareerFieldInput {
+  const name = input.name.trim();
+  const description = input.description.trim();
+  if (!name || !description) {
+    throw new Error("الرجاء إدخال اسم المجال ووصفه");
+  }
+  return {
+    ...input,
+    name,
+    description,
+    traits: input.traits.filter((t) => (CAREER_TRAITS as readonly string[]).includes(t)),
+    resources: input.resources.map((r) => {
+      if (!isSafeHttpUrl(r.url)) throw new Error("رابط مصدر غير صالح");
+      return r;
+    }),
+  };
+}
+
+function slugify(name: string) {
+  return `${name.trim().toLowerCase().replace(/\s+/g, "-")}-${Date.now().toString(36)}`;
+}
+
+export async function createCareerField(prisma: PrismaClient, input: CareerFieldInput) {
+  const data = validateCareerFieldInput(input);
+  return prisma.careerField.create({
+    data: { ...data, slug: slugify(data.name) },
+  });
+}
+
+/**
+ * Edits a field in place — same id, same slug. Previously the only way to
+ * fix a typo was delete + recreate, which silently orphaned the old id
+ * inside every past CareerExplorationResult.suggestedFieldIds (so a
+ * student's earlier results would lose that suggestion from their history).
+ */
+export async function updateCareerField(
+  prisma: PrismaClient,
+  fieldId: string,
+  input: CareerFieldInput,
+) {
+  const data = validateCareerFieldInput(input);
+  return prisma.careerField.update({ where: { id: fieldId }, data });
+}
