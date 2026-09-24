@@ -410,7 +410,27 @@ can set two different tokens. This was reproduced directly with two
 concurrent requests, which returned two different `authjs.csrf-token`
 values. It occurred in 1 of 34 logins and fails closed. It is listed
 under Remaining Gaps and was not fixed, because it is outside the
-approved scope. A full re-run then passed 26/26.
+approved scope at the time. A full re-run then passed 26/26. It has
+since been fixed; see Remaining Gaps #13.
+
+**Follow-up round E2E (#13 fix): 26/26 + 5/5.** Five new fresh-browser
+login scenarios cover:
+- the injected race with a correct password: logged in after exactly one
+  retry, with one successful login attempt recorded;
+- no race: one POST, logged in;
+- a wrong password: one POST, not retried, the wrong-credentials message,
+  and exactly one failed attempt recorded;
+- the injected race with a wrong password: retried once, still rejected
+  as wrong credentials, with one failed attempt recorded;
+- a persistent CSRF failure: exactly two POSTs, not logged in, and a
+  distinct session error.
+
+In the first full re-run, step 8c failed. This was root-caused: the
+server recorded the game correctly (ended, score 1), but the runner's
+score text is replaced almost at once by the play page's cooldown notice
+after `router.refresh()`, and that step had asserted on the transient
+text. The step now asserts on the server-recorded session. The brief
+score display itself predates this round and was left unchanged.
 
 ## External Infrastructure Required
 
@@ -492,12 +512,37 @@ tests and, where it has UI, a browser E2E step:
 12. **HLS/DASH/DRM/CDN, real payment gateway, scheduled jobs, PDF
     generation.** External infrastructure. The existing abstractions are
     unchanged, and nothing fakes any of them.
-13. **New, found by E2E: rare Auth.js `MissingCSRF` on a first login in a
-    fresh browser.** Root cause is described under E2E Findings. The
-    effect is that a login is refused once with the generic error, and a
-    retry works; it never lets anyone in. It's outside the approved scope,
-    so it's not fixed. A narrow fix would be to retry `signIn` once in
-    `login-form.tsx` when the result is `MissingCSRF`.
+13. ~~Auth.js `MissingCSRF` on a first login in a fresh browser~~ →
+    **CLOSED (2026-09-24, follow-up round).**
+    - **Root cause:** Auth.js mints a new CSRF cookie on any auth request
+      that arrives without one. In a fresh browser, concurrent cookie-less
+      requests (the SessionProvider's `/api/auth/session` and `signIn`'s
+      own `/api/auth/providers` and `/api/auth/csrf`) can each set a
+      different token. If the cookie jar ends up out of step with the
+      token `signIn` posted, the server rejects the POST in
+      `validateCSRF`, before `authorize()` runs.
+    - **Fix:** `src/lib/sign-in-with-csrf-retry.ts`, used by
+      `login-form.tsx`, retries `signIn` exactly once, and only when the
+      result's `error` is exactly `MissingCSRF`. Each `signIn` call
+      re-fetches `/api/auth/csrf`, and by then the jar holds one valid
+      cookie, so the retry posts the matching token.
+    - **Other errors:** a wrong password (`CredentialsSignin`) and any
+      other error are never retried. They show the same message as
+      before, so credential failures are not hidden and rate limiting
+      still records exactly one attempt. A CSRF failure that persists is
+      reported after one retry, with no loop, as a distinct "session could
+      not be verified" message instead of the misleading "wrong password".
+    - **No auth bypass:** the retry is just a second full sign-in, with
+      the same credential check, CSRF check and rate limit.
+    - **Proof:** 7 unit tests, plus 5 fresh-browser Playwright scenarios.
+      The scenarios reproduce the race's end state with a real,
+      server-minted foreign CSRF cookie. Against the pre-fix form, 3 of 5
+      fail (the correct password is rejected with a single `MissingCSRF`
+      POST); with the fix, 5 of 5 pass.
+    - **Not changed:** `register/page.tsx`'s automatic sign-in after
+      signup can hit the same race, but it already falls back to `/login`,
+      where this fix applies. It was kept unchanged to stay within the
+      approved scope.
 
 ## Production Readiness Assessment
 
@@ -507,14 +552,16 @@ tests and, where it has UI, a browser E2E step:
 - `npm run build`: succeeds, all routes compile including the two newly
   added ones (`/teacher/entitlements`, and the refund UI on
   `/teacher/payments`).
-- `npx vitest run`: 270/270 passing against the real Postgres test
-  database (no mocks). The count was 220 before the audit and 238 after it.
-- A real Playwright browser E2E pass: 26/26 steps passing against a live
-  `next dev` server and real database (see "E2E Findings" above).
+- `npx vitest run`: 277/277 passing against the real Postgres test
+  database (no mocks). The count was 220 before the audit, 238 after it,
+  and 270 after the gap-closure round.
+- A real Playwright browser E2E pass: 26/26 main-suite steps plus 5/5
+  fresh-browser login/CSRF steps, against a live `next dev` server and
+  real database (see "E2E Findings" above).
 - Gap-closure round: gaps #1–#7 closed. #8–#10 were assessed and
   intentionally left unchanged pending product/data decisions. #11 is an
-  external security enhancement and #12 is external infrastructure. One
-  new third-party login race (#13) is documented and not fixed.
+  external security enhancement and #12 is external infrastructure. The
+  third-party login race found by E2E (#13) was fixed in a follow-up round.
 - Six CRITICAL, several HIGH, and several MEDIUM real bugs — all
   independently confirmed via direct code reading, not assumed from a
   report — were found and fixed, each with a regression test that fails
@@ -522,7 +569,7 @@ tests and, where it has UI, a browser E2E step:
   `isFree` sequential-gating bypass) was found only by the E2E pass,
   confirming the mandate's premise that business-logic tests alone are
   not sufficient proof of correct end-to-end wiring.
-- The still-open items (#8–#13) are documented above with the reason
+- The still-open items (#8–#12) are documented above with the reason
   each is open. None of them lets an unauthorized user reach protected
   content or money.
 - No feature was deleted, replaced with a placeholder, or silently

@@ -161,15 +161,19 @@ change.
   stateless JWT sessions). No automatic banning exists anywhere in the
   codebase — the spec explicitly requires human review for weak signals,
   and no such automation has been built to bypass that.
-- **Known third-party issue (observed, not fixed)**: Auth.js v5 issues a
-  fresh CSRF cookie on *any* auth request that lacks one, so on the very
-  first login in a brand-new browser, concurrent `/api/auth/session` and
-  `/api/auth/csrf` requests can set two different tokens. If the wrong one
-  wins, the login POST is rejected with `MissingCSRF` and the form shows
-  the generic "wrong email or password" message; a retry succeeds. Seen
-  once in 34 logins during E2E runs and reproduced directly with two
-  concurrent requests. It fails closed (never lets an unauthenticated
-  request through), so it is a UX issue, not a vulnerability.
+- **First-login CSRF race (fixed)**: Auth.js v5 issues a fresh CSRF cookie
+  on *any* auth request that lacks one, so on the very first login in a
+  brand-new browser, concurrent cookie-less auth requests could set two
+  different tokens and the login POST was rejected with `MissingCSRF`,
+  shown to the user as "wrong email or password". `login-form.tsx` now
+  retries `signIn` exactly once, and only for `MissingCSRF`
+  (`src/lib/sign-in-with-csrf-retry.ts`). The retry is a second, complete
+  sign-in: it re-fetches the CSRF token, and CSRF validation, the
+  credential check and the login rate limit all run again. Auth.js's CSRF
+  protection is unchanged and still rejects any mismatched token.
+  `CredentialsSignin` (wrong password) and every other error are never
+  retried, so rate limiting still sees exactly one attempt per submit. A
+  CSRF failure that persists is reported after one retry, never looped.
 - **External security enhancement (not in the original requirements)**: no
   CAPTCHA on registration. Adding one needs an external provider
   (reCAPTCHA/hCaptcha/Turnstile).

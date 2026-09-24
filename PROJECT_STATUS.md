@@ -1128,10 +1128,27 @@ against the pre-fix code.
 - **#11** (CAPTCHA) is an external security enhancement and **#12** is
   external infrastructure; neither is faked.
 - **New finding from E2E:** a rare Auth.js `MissingCSRF` race on the
-  first login in a fresh browser (1 in 34 logins). It fails closed and a
-  retry works. It's documented and not fixed, because it's outside the
-  approved scope.
+  first login in a fresh browser (1 in 34 logins). It was fixed in a
+  follow-up round; see below.
 - Tests went from 238 to 270, all passing, and browser E2E is 26/26.
+
+### Follow-up: gap #13 fixed (first-login `MissingCSRF` race)
+
+- `src/lib/sign-in-with-csrf-retry.ts`, used by `login-form.tsx`, retries
+  `signIn` exactly once, and only when the result is `MissingCSRF`. The
+  retry re-fetches the CSRF token.
+- A wrong password (`CredentialsSignin`) and all other errors are never
+  retried and show the same message as before. A CSRF failure that
+  persists shows a distinct "session could not be verified" message after
+  one retry.
+- Verified with 7 unit tests and 5 fresh-browser Playwright scenarios.
+  The scenarios use a real, server-minted foreign CSRF cookie; 3 of them
+  failed against the pre-fix form and all 5 pass now. Rate-limit
+  accounting was checked in the database: exactly one attempt per submit.
+- `register/page.tsx`'s automatic sign-in after signup was left unchanged,
+  per scope. On the same race it already falls back to `/login`, where the
+  fix applies.
+- Tests: 277/277. E2E: 26/26 main suite plus 5/5 login/CSRF.
 
 ## Not started (by priority order, all schema-ready)
 
@@ -1308,7 +1325,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 270/270 passing (29 files)
+npx vitest run       # 277/277 passing (30 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1356,10 +1373,7 @@ item needs before it can move:
 1. **Product decisions:** gap #8 (Entitlement delete behavior), the
    `onDelete` behavior for gap #9's FKs, and whether promo percentages may
    be fractional (gap #10).
-2. **Scope decision:** whether to fix the Auth.js `MissingCSRF`
-   first-login race (#13). The suggested fix is to retry `signIn` once
-   in `login-form.tsx`.
-3. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron,
+2. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron,
    PDF generation, and CAPTCHA.
-4. **Architectural change:** concurrent-session detection, which would
+3. **Architectural change:** concurrent-session detection, which would
    mean moving off JWT sessions.
