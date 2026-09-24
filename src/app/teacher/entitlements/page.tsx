@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { grantEntitlementAction } from "./actions";
+import { grantEntitlementAction, grantLessonToSubscribersAction } from "./actions";
 
 export default async function TeacherEntitlementsPage() {
   const [courses, recentGrants] = await Promise.all([
@@ -71,6 +71,47 @@ export default async function TeacherEntitlementsPage() {
         >
           منح الوصول
         </button>
+      </form>
+
+      <form
+        action={grantLessonToSubscribersAction}
+        className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
+      >
+        <div>
+          <h2 className="font-semibold">منح درس لكل المشتركين في الكورس</h2>
+          <p className="mt-1 text-xs text-gray-600">
+            يمنح الدرس لكل طالب لديه اشتراك فعّال تشمل باقته الكورس كاملًا.
+            ينتهي الوصول بانتهاء اشتراك الطالب، ولا يُكرَّر لمن يملك الدرس
+            بالفعل، وتُسجَّل العملية في سجل التدقيق.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-gray-600">الدرس</span>
+            <select
+              name="lessonId"
+              required
+              className="w-64 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">اختر درسًا</option>
+              {courses.map((course) => (
+                <optgroup key={course.id} label={course.title}>
+                  {course.lessons.map((lesson) => (
+                    <option key={lesson.id} value={lesson.id}>
+                      {lesson.title}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700"
+          >
+            منح لكل المشتركين
+          </button>
+        </div>
       </form>
 
       <div>

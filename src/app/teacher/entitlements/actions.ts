@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
-import { grantAdminEntitlement } from "@/lib/business/video-access";
+import {
+  grantAdminEntitlement,
+  grantLessonToCourseSubscribers,
+} from "@/lib/business/video-access";
 
 export async function grantEntitlementAction(formData: FormData) {
   const session = await auth();
@@ -32,4 +35,20 @@ export async function grantEntitlementAction(formData: FormData) {
   });
 
   revalidatePath("/teacher/entitlements");
+}
+
+export async function grantLessonToSubscribersAction(formData: FormData) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  const lessonId = String(formData.get("lessonId") ?? "");
+  if (!lessonId) throw new Error("الرجاء اختيار الدرس");
+
+  await grantLessonToCourseSubscribers(prisma, {
+    lessonId,
+    grantedById: session.user.id,
+  });
+
+  revalidatePath("/teacher/entitlements");
+  revalidatePath("/teacher/audit-log");
 }

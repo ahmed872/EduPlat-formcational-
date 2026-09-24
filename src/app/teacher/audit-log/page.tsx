@@ -7,6 +7,7 @@ const ACTION_LABELS: Record<string, string> = {
   REFUND_PAYMENT: "استرجاع دفعة",
   BLOCK_USER: "حظر حساب",
   UNBLOCK_USER: "رفع حظر حساب",
+  BATCH_GRANT_LESSON: "منح درس لكل مشتركي الكورس",
 };
 
 export default async function TeacherAuditLogPage() {

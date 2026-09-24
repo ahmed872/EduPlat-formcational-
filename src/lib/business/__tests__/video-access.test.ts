@@ -12,6 +12,7 @@ import {
   checkVideoAccess,
   grantAdminEntitlement,
   grantEntitlementsForSubscription,
+  grantLessonToCourseSubscribers,
   startWatchSession,
   updateWatchProgress,
 } from "@/lib/business/video-access";
@@ -274,5 +275,136 @@ describe("checkVideoAccess", () => {
     });
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe("NOT_ENTITLED");
+  });
+});
+
+// Final audit gap #1: the only way to give content published after a
+// purchase to existing subscribers was one grantAdminEntitlement call per
+// student per lesson.
+describe("grantLessonToCourseSubscribers", () => {
+  async function createTeacher() {
+    return prisma.user.create({
+      data: {
+        email: `teacher-batch-${Date.now()}-${Math.random()}@test.local`,
+        name: "Teacher",
+        passwordHash: "x",
+        role: "TEACHER_ADMIN",
+      },
+    });
+  }
+
+  it("grants a newly published lesson to every active course subscriber, and nobody else", async () => {
+    const teacher = await createTeacher();
+    const course = await createCourse();
+    await createLesson({ courseId: course.id });
+    const [subA, subB, outsider, expired] = await Promise.all([
+      createStudent(),
+      createStudent(),
+      createStudent(),
+      createStudent(),
+    ]);
+    await subscribeStudentToCourse(subA.id, course.id);
+    await subscribeStudentToCourse(subB.id, course.id);
+    const expiredSub = await subscribeStudentToCourse(expired.id, course.id);
+    await prisma.subscription.update({
+      where: { id: expiredSub.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    // Published after everyone subscribed — the snapshot rule means nobody has it yet.
+    const newLesson = await createLesson({ courseId: course.id });
+    const newVideo = await createVideo({ lessonId: newLesson.id });
+    for (const s of [subA, subB]) {
+      expect((await checkVideoAccess(prisma, { studentId: s.id, videoId: newVideo.id })).allowed).toBe(false);
+    }
+
+    const result = await grantLessonToCourseSubscribers(prisma, {
+      lessonId: newLesson.id,
+      grantedById: teacher.id,
+    });
+
+    expect(result).toEqual({ granted: 2, skipped: 0 });
+    for (const s of [subA, subB]) {
+      expect((await checkVideoAccess(prisma, { studentId: s.id, videoId: newVideo.id })).allowed).toBe(true);
+    }
+    for (const s of [outsider, expired]) {
+      expect((await checkVideoAccess(prisma, { studentId: s.id, videoId: newVideo.id })).allowed).toBe(false);
+    }
+    const audit = await prisma.auditLog.findFirst({ where: { action: "BATCH_GRANT_LESSON" } });
+    expect(audit?.entityId).toBe(newLesson.id);
+    expect(audit?.actorId).toBe(teacher.id);
+  });
+
+  it("is idempotent — running it twice never duplicates grants", async () => {
+    const teacher = await createTeacher();
+    const course = await createCourse();
+    const student = await createStudent();
+    await subscribeStudentToCourse(student.id, course.id);
+    const newLesson = await createLesson({ courseId: course.id });
+
+    await grantLessonToCourseSubscribers(prisma, { lessonId: newLesson.id, grantedById: teacher.id });
+    const second = await grantLessonToCourseSubscribers(prisma, {
+      lessonId: newLesson.id,
+      grantedById: teacher.id,
+    });
+
+    expect(second).toEqual({ granted: 0, skipped: 1 });
+    expect(
+      await prisma.entitlement.count({ where: { studentId: student.id, lessonId: newLesson.id } }),
+    ).toBe(1);
+  });
+
+  it("does not grant to a plan that only includes hand-picked lessons of the course", async () => {
+    const teacher = await createTeacher();
+    const course = await createCourse();
+    const pickedLesson = await createLesson({ courseId: course.id });
+    const student = await createStudent();
+    const plan = await createSubscriptionPlan();
+    await prisma.subscriptionPlanItem.create({ data: { planId: plan.id, lessonId: pickedLesson.id } });
+    await prisma.subscription.create({
+      data: {
+        studentId: student.id,
+        planId: plan.id,
+        status: "ACTIVE",
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+
+    const newLesson = await createLesson({ courseId: course.id });
+    const result = await grantLessonToCourseSubscribers(prisma, {
+      lessonId: newLesson.id,
+      grantedById: teacher.id,
+    });
+
+    expect(result.granted).toBe(0);
+  });
+
+  it("makes each grant expire with the student's subscription, so the bonus lesson never outlives paid access", async () => {
+    const teacher = await createTeacher();
+    const course = await createCourse();
+    const student = await createStudent();
+    const subscription = await subscribeStudentToCourse(student.id, course.id);
+    const newLesson = await createLesson({ courseId: course.id });
+    const newVideo = await createVideo({ lessonId: newLesson.id });
+
+    await grantLessonToCourseSubscribers(prisma, { lessonId: newLesson.id, grantedById: teacher.id });
+
+    const grant = await prisma.entitlement.findFirstOrThrow({
+      where: { studentId: student.id, lessonId: newLesson.id },
+    });
+    expect(grant.reason).toBe("ADMIN_GRANT");
+    expect(grant.expiresAt?.getTime()).toBe(subscription.expiresAt.getTime());
+
+    await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: { expiresAt: new Date(Date.now() - 1000), status: "EXPIRED" },
+    });
+    await prisma.entitlement.update({
+      where: { id: grant.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(
+      (await checkVideoAccess(prisma, { studentId: student.id, videoId: newVideo.id })).allowed,
+    ).toBe(false);
   });
 });

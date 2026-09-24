@@ -266,6 +266,92 @@ export async function grantAdminEntitlement(
 }
 
 /**
+ * Batch form of grantAdminEntitlement: grants one lesson to every student
+ * with a currently ACTIVE, unexpired subscription whose plan includes the
+ * lesson's whole course (a SubscriptionPlanItem with that courseId). Plans
+ * that only include hand-picked individual lessons are deliberately not
+ * treated as "subscribed to the course", so this can never over-grant paid
+ * content to them.
+ *
+ * - Idempotent: a student who already holds a live entitlement to the lesson
+ *   is skipped, so running it twice never duplicates rows.
+ * - Each grant expires with the subscription that qualified the student
+ *   (unless an explicit, earlier expiresAt is given), so a bonus lesson never
+ *   outlives the paid access it was a bonus to.
+ * - Still explicit and human-authorized (ADMIN_GRANT + grantedById), and the
+ *   whole batch is written in one transaction with an AuditLog row.
+ */
+export async function grantLessonToCourseSubscribers(
+  prisma: PrismaClient,
+  params: { lessonId: string; grantedById: string; expiresAt?: Date; now?: Date },
+): Promise<{ granted: number; skipped: number }> {
+  const now = params.now ?? new Date();
+  const lesson = await prisma.lesson.findUniqueOrThrow({
+    where: { id: params.lessonId },
+    include: { video: true },
+  });
+
+  const subscriptions = await prisma.subscription.findMany({
+    where: {
+      status: "ACTIVE",
+      cancelledAt: null,
+      expiresAt: { gt: now },
+      plan: { items: { some: { courseId: lesson.courseId } } },
+    },
+    orderBy: { expiresAt: "desc" },
+  });
+
+  // One grant per student, tied to their longest-running qualifying subscription.
+  const expiryByStudent = new Map<string, Date>();
+  for (const subscription of subscriptions) {
+    if (!expiryByStudent.has(subscription.studentId)) {
+      expiryByStudent.set(subscription.studentId, subscription.expiresAt);
+    }
+  }
+
+  const alreadyEntitled = await prisma.entitlement.findMany({
+    where: {
+      lessonId: lesson.id,
+      studentId: { in: Array.from(expiryByStudent.keys()) },
+      revokedAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    select: { studentId: true },
+  });
+  const skip = new Set(alreadyEntitled.map((e) => e.studentId));
+  const toGrant = Array.from(expiryByStudent.entries()).filter(([studentId]) => !skip.has(studentId));
+
+  await prisma.$transaction([
+    ...toGrant.map(([studentId, subscriptionExpiry]) =>
+      prisma.entitlement.create({
+        data: {
+          studentId,
+          lessonId: lesson.id,
+          videoId: lesson.video?.id,
+          reason: "ADMIN_GRANT",
+          grantedById: params.grantedById,
+          expiresAt:
+            params.expiresAt && params.expiresAt < subscriptionExpiry
+              ? params.expiresAt
+              : subscriptionExpiry,
+        },
+      }),
+    ),
+    prisma.auditLog.create({
+      data: {
+        actorId: params.grantedById,
+        action: "BATCH_GRANT_LESSON",
+        entityType: "Lesson",
+        entityId: lesson.id,
+        metadata: { courseId: lesson.courseId, granted: toGrant.length, skipped: skip.size },
+      },
+    }),
+  ]);
+
+  return { granted: toGrant.length, skipped: skip.size };
+}
+
+/**
  * Grants entitlements sourced from a promo redemption's linked content
  * (PromoApplicableContent), bypassing subscriptions/payments entirely —
  * this is how FREE_LESSON / FREE_PACKAGE / FREE_PERIOD promo codes actually
