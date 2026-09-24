@@ -23,8 +23,14 @@ export interface StorageProvider {
   generateKey(originalFilename: string): string;
 }
 
-const VIDEO_STORAGE_ROOT = path.join(process.cwd(), "storage", "videos");
-const ATTACHMENT_STORAGE_ROOT = path.join(process.cwd(), "storage", "attachments");
+/**
+ * Root of all private files. Defaults to ./storage in the app directory;
+ * in production point STORAGE_ROOT at a persistent volume (see
+ * DEPLOYMENT.md) — the container filesystem is not durable.
+ */
+const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(process.cwd(), "storage");
+const VIDEO_STORAGE_ROOT = path.join(STORAGE_ROOT, "videos");
+const ATTACHMENT_STORAGE_ROOT = path.join(STORAGE_ROOT, "attachments");
 
 class LocalPrivateStorageProvider implements StorageProvider {
   readonly name = "LOCAL_PRIVATE";
@@ -42,8 +48,9 @@ class LocalPrivateStorageProvider implements StorageProvider {
   }
 
   async save(key: string, data: Buffer): Promise<void> {
-    await fsp.mkdir(this.root, { recursive: true });
-    await fsp.writeFile(this.resolvePath(key), data);
+    // Owner-only: other OS users on the host must not read paid content.
+    await fsp.mkdir(this.root, { recursive: true, mode: 0o700 });
+    await fsp.writeFile(this.resolvePath(key), data, { mode: 0o600 });
   }
 
   async getSize(key: string): Promise<number> {
@@ -84,4 +91,31 @@ export function getVideoStorageProvider(): StorageProvider {
 /** Lesson attachments: same private-disk model, separate root from videos. */
 export function getAttachmentStorageProvider(): StorageProvider {
   return attachmentStorageProvider;
+}
+
+/**
+ * Startup probe: every private storage root must exist (it is created if
+ * missing) and be writable by the server process. Returns error messages.
+ */
+export async function checkPrivateStorageWritable(): Promise<string[]> {
+  const errors: string[] = [];
+  for (const root of [VIDEO_STORAGE_ROOT, ATTACHMENT_STORAGE_ROOT]) {
+    try {
+      // Bounded: a hung network mount must fail the check, not hang startup.
+      await Promise.race([
+        (async () => {
+          await fsp.mkdir(root, { recursive: true, mode: 0o700 });
+          const probe = path.join(root, `.write-probe-${process.pid}`);
+          await fsp.writeFile(probe, "ok");
+          await fsp.rm(probe, { force: true });
+        })(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "TIMEOUT" })), 5000).unref(),
+        ),
+      ]);
+    } catch (error) {
+      errors.push(`private storage ${root} is not writable (${(error as NodeJS.ErrnoException).code ?? "error"})`);
+    }
+  }
+  return errors;
 }

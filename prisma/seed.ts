@@ -40,12 +40,22 @@ async function main() {
     update: {},
   });
 
-  const teacherEmail = "teacher@eduplat.local";
+  // First teacher/admin account. Development gets a documented default;
+  // production must supply its own credentials — a well-known default
+  // password on a public deployment would be an open admin account.
+  const production = process.env.NODE_ENV === "production";
+  const teacherEmail = process.env.SEED_TEACHER_EMAIL || "teacher@eduplat.local";
+  const configuredPassword = process.env.SEED_TEACHER_PASSWORD;
+  if (production && (!configuredPassword || configuredPassword.length < 12)) {
+    throw new Error(
+      "In production set SEED_TEACHER_EMAIL and SEED_TEACHER_PASSWORD (at least 12 characters) before seeding.",
+    );
+  }
   const existingTeacher = await prisma.user.findUnique({
     where: { email: teacherEmail },
   });
   if (!existingTeacher) {
-    const passwordHash = await bcrypt.hash("ChangeMe123!", 12);
+    const passwordHash = await bcrypt.hash(configuredPassword || "ChangeMe123!", 12);
     const teacher = await prisma.user.create({
       data: {
         email: teacherEmail,
@@ -57,7 +67,14 @@ async function main() {
     await prisma.teacherProfile.create({
       data: { userId: teacher.id },
     });
-    console.log(`Seeded teacher/admin account: ${teacherEmail} / ChangeMe123!`);
+    // Never print a password that came from the environment.
+    console.log(
+      configuredPassword
+        ? `Seeded teacher/admin account: ${teacherEmail} (password from SEED_TEACHER_PASSWORD)`
+        : `Seeded development teacher/admin account: ${teacherEmail} / ChangeMe123! (development only)`,
+    );
+  } else {
+    console.log(`Teacher/admin account ${teacherEmail} already exists — left unchanged.`);
   }
 
   console.log("Seed complete.");
