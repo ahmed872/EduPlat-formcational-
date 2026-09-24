@@ -16,6 +16,12 @@ function makeExp() {
   return Math.floor(Date.now() / 1000) + 60;
 }
 
+/** A token bound to a fresh watch session, as issueSignedPlaybackUrl mints them. */
+async function tokenFor(studentId: string, videoId: string) {
+  const session = await prisma.watchSession.create({ data: { studentId, videoId } });
+  return issuePlaybackToken({ studentId, videoId, sessionId: session.id, exp: makeExp() });
+}
+
 async function studentUserOf(student: { userId: string }) {
   return prisma.user.findUniqueOrThrow({ where: { id: student.userId } });
 }
@@ -29,7 +35,7 @@ describe("GET /api/stream/[videoId]", () => {
     const content = Buffer.from("fake mp4 bytes for testing purposes");
     await getVideoStorageProvider().save(video.storageKey, content);
 
-    const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+    const token = await tokenFor(student.id, video.id);
     const user = await studentUserOf(student);
     const cookie = await sessionCookieFor({
       id: user.id,
@@ -55,7 +61,7 @@ describe("GET /api/stream/[videoId]", () => {
     const content = Buffer.from("0123456789ABCDEF");
     await getVideoStorageProvider().save(video.storageKey, content);
 
-    const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+    const token = await tokenFor(student.id, video.id);
     const user = await studentUserOf(student);
     const cookie = await sessionCookieFor({
       id: user.id,
@@ -92,7 +98,7 @@ describe("GET /api/stream/[videoId]", () => {
     await getVideoStorageProvider().save(videoB.storageKey, Buffer.from("secret content"));
 
     // Token was issued for videoA but the request is for videoB.
-    const token = issuePlaybackToken({ studentId: student.id, videoId: videoA.id, exp: makeExp() });
+    const token = await tokenFor(student.id, videoA.id);
     const request = new NextRequest(`http://localhost/api/stream/${videoB.id}?token=${token}`);
 
     const response = await GET(request, { params: Promise.resolve({ videoId: videoB.id }) });
@@ -105,7 +111,7 @@ describe("GET /api/stream/[videoId]", () => {
     const video = await createVideo({ lessonId: lesson.id });
     await getVideoStorageProvider().save(video.storageKey, Buffer.from("paid content"));
 
-    const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+    const token = await tokenFor(student.id, video.id);
     const user = await studentUserOf(student);
     const cookie = await sessionCookieFor({
       id: user.id,
@@ -125,7 +131,7 @@ describe("GET /api/stream/[videoId]", () => {
     const lesson = await createLesson({ isFree: true });
     const video = await createVideo({ lessonId: lesson.id, isFree: true });
     await getVideoStorageProvider().save(video.storageKey, Buffer.from("content"));
-    const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+    const token = await tokenFor(student.id, video.id);
     await prisma.lesson.update({ where: { id: lesson.id }, data: { status: "DRAFT" } });
 
     const user = await studentUserOf(student);
@@ -150,7 +156,7 @@ describe("GET /api/stream/[videoId]", () => {
       const video = await createVideo({ lessonId: lesson.id, isFree: true });
       await getVideoStorageProvider().save(video.storageKey, Buffer.from("content"));
 
-      const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+      const token = await tokenFor(student.id, video.id);
       const request = new NextRequest(`http://localhost/api/stream/${video.id}?token=${token}`);
 
       const response = await GET(request, { params: Promise.resolve({ videoId: video.id }) });
@@ -164,7 +170,7 @@ describe("GET /api/stream/[videoId]", () => {
       const video = await createVideo({ lessonId: lesson.id, isFree: true });
       await getVideoStorageProvider().save(video.storageKey, Buffer.from("content"));
 
-      const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+      const token = await tokenFor(student.id, video.id);
       const otherUser = await studentUserOf(otherStudent);
       const cookie = await sessionCookieFor({
         id: otherUser.id,
@@ -193,7 +199,7 @@ describe("GET /api/stream/[videoId]", () => {
       });
       await prisma.user.update({ where: { id: user.id }, data: { status: "BLOCKED" } });
 
-      const token = issuePlaybackToken({ studentId: student.id, videoId: video.id, exp: makeExp() });
+      const token = await tokenFor(student.id, video.id);
       const request = new NextRequest(`http://localhost/api/stream/${video.id}?token=${token}`, {
         headers: { cookie },
       });

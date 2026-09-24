@@ -27,6 +27,9 @@ function sign(payload: string): string {
 export interface PlaybackTokenPayload {
   studentId: string;
   videoId: string;
+  /** The WatchSession this playback belongs to — delivered bytes are
+   * accounted against it, so the view limit is enforced server-side. */
+  sessionId: string;
   exp: number; // unix seconds
 }
 
@@ -57,6 +60,9 @@ export function verifyPlaybackToken(token: string): PlaybackTokenPayload | null 
     if (typeof payload.exp !== "number" || payload.exp < Math.floor(Date.now() / 1000)) {
       return null;
     }
+    // Tokens minted before playback was bound to a watch session carry no
+    // sessionId and are no longer accepted; the player simply asks again.
+    if (typeof payload.sessionId !== "string" || !payload.sessionId) return null;
     return payload;
   } catch {
     return null;
@@ -73,21 +79,28 @@ export function verifyPlaybackToken(token: string): PlaybackTokenPayload | null 
 export async function issueSignedPlaybackUrl(
   prisma: PrismaClient,
   params: { studentId: string; videoId: string },
-): Promise<{ url: string; expiresAt: Date } | { error: string }> {
+): Promise<{ url: string; expiresAt: Date; sessionId: string } | { error: string }> {
   const decision = await checkVideoAccess(prisma, params);
   if (!decision.allowed) {
     return { error: decision.reason };
   }
 
+  // Every playback URL belongs to its own watch session: the stream route
+  // accounts the bytes it delivers against it (see recordDeliveredRange).
+  const watchSession = await prisma.watchSession.create({
+    data: { studentId: params.studentId, videoId: params.videoId },
+  });
   const exp = Math.floor(Date.now() / 1000) + PLAYBACK_TOKEN_TTL_SECONDS;
   const token = issuePlaybackToken({
     studentId: params.studentId,
     videoId: params.videoId,
+    sessionId: watchSession.id,
     exp,
   });
 
   return {
     url: `/api/stream/${params.videoId}?token=${token}`,
     expiresAt: new Date(exp * 1000),
+    sessionId: watchSession.id,
   };
 }

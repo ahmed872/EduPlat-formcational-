@@ -666,6 +666,10 @@ model WatchSession {
   deviceInfo        Json?
   consumedView      Boolean        @default(false) // set once the configured threshold is crossed
   viewNumber        Int? // ordinal (1..viewLimit) assigned when consumed
+  /// Which 1%-slices (0..99) of the video file the stream route has actually
+  /// delivered for this playback session — the server-side measure of how
+  /// much was watched, independent of anything the client reports.
+  servedBuckets     Int[]          @default([])
 
   @@index([studentId, videoId])
 }

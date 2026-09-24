@@ -67,21 +67,11 @@ export function VideoPlayer({
         if (!cancelled) setError(data.error ?? "تعذر تجهيز رابط التشغيل");
         return;
       }
-      const { url } = await urlResponse.json();
-
-      const sessionResponse = await fetch("/api/watch-sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId }),
-      });
-      if (!sessionResponse.ok) {
-        const data = await sessionResponse.json().catch(() => ({}));
-        if (!cancelled) setError(data.error ?? "تعذر بدء جلسة المشاهدة");
-        return;
-      }
-      const watchSession = await sessionResponse.json();
+      // The playback URL comes with its own watch session: the server counts
+      // the bytes it streams for this session toward the view limit.
+      const { url, sessionId } = await urlResponse.json();
       if (cancelled) return;
-      sessionIdRef.current = watchSession.id;
+      sessionIdRef.current = sessionId;
       setPlaybackUrl(url);
     }
 

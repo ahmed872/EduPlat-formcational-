@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { checkVideoAccess } from "@/lib/business/video-access";
+import { checkVideoAccess, recordDeliveredRange } from "@/lib/business/video-access";
 import { verifyPlaybackToken } from "@/lib/business/playback";
 import { getVideoStorageProvider } from "@/lib/storage/provider";
 import { streamFileResponse } from "@/lib/http/range-stream";
@@ -42,20 +42,36 @@ export const GET = auth(async function GET(request, context) {
     return new Response("Token does not match the current session", { status: 403 });
   }
 
+  const watchSession = await prisma.watchSession.findUnique({ where: { id: payload.sessionId } });
+  if (!watchSession || watchSession.studentId !== payload.studentId || watchSession.videoId !== videoId) {
+    return new Response("Invalid playback session", { status: 403 });
+  }
+
   const decision = await checkVideoAccess(prisma, {
     studentId: payload.studentId,
     videoId,
   });
-  if (!decision.allowed) {
+  // The view that used up the last allowed slot may still be finished —
+  // it was paid for. Any other session is refused once the limit is hit.
+  const finishingPaidView = decision.reason === "VIEW_LIMIT_REACHED" && watchSession.consumedView;
+  if (!decision.allowed && !finishingPaidView) {
     return new Response(`Access no longer authorized: ${decision.reason}`, { status: 403 });
   }
 
   const video = await prisma.video.findUnique({ where: { id: videoId } });
   if (!video) return new Response("Video not found", { status: 404 });
 
+  // Server-side view accounting: what counts toward the view limit is the
+  // share of the file this session actually received, not what the player
+  // chooses to report.
   return streamFileResponse(
     getVideoStorageProvider(),
     video.storageKey,
     request.headers.get("range"),
+    "video/mp4",
+    video.isFree
+      ? undefined
+      : ({ start, bytes, size }) =>
+          recordDeliveredRange(prisma, { sessionId: watchSession.id, fileSize: size, start, bytes }),
   );
 });

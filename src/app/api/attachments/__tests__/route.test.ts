@@ -117,6 +117,7 @@ describe("GET /api/attachments/[attachmentId]", () => {
     const videoToken = issuePlaybackToken({
       studentId: student.id,
       videoId: attachment.id,
+      sessionId: "any",
       exp: Math.floor(Date.now() / 1000) + 60,
     });
     expect((await get(attachment.id, { token: videoToken, cookie })).status).toBe(401);

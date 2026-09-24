@@ -174,51 +174,132 @@ export async function updateWatchProgress(
     });
     if (!session) throw new Error("Watch session not found");
 
-    const completionPercent =
-      params.videoDurationSeconds > 0
-        ? Math.min(100, (params.watchedSeconds / params.videoDurationSeconds) * 100)
-        : 0;
+    // The server's own duration wins when the teacher recorded one — a
+    // client could otherwise report a huge duration so its progress never
+    // reaches the threshold.
+    const duration =
+      session.video.durationSeconds && session.video.durationSeconds > 0
+        ? session.video.durationSeconds
+        : params.videoDurationSeconds;
+    const watchedSeconds = duration > 0 ? Math.min(params.watchedSeconds, duration) : params.watchedSeconds;
+    const completionPercent = duration > 0 ? Math.min(100, (watchedSeconds / duration) * 100) : 0;
 
     const threshold = await getPlatformSetting<number>(
       PLATFORM_SETTING_KEYS.VIEW_CONSUMPTION_THRESHOLD_PERCENT,
     );
-
-    const crossesThreshold =
-      !session.consumedView && !session.video.isFree && completionPercent >= threshold;
-
-    let shouldConsume = false;
-    let viewNumber: number | null = session.viewNumber;
-    if (crossesThreshold) {
-      // Re-count consumed views for THIS video, right now, inside the same
-      // transaction — a stale count read before several sessions were
-      // opened is exactly what let the limit be bypassed.
-      const consumedCount = await tx.watchSession.count({
-        where: {
-          studentId: session.studentId,
-          videoId: session.videoId,
-          consumedView: true,
-          id: { not: session.id },
-        },
-      });
-      if (consumedCount < session.video.viewLimit) {
-        shouldConsume = true;
-        viewNumber = consumedCount + 1;
-      }
-      // else: the limit was already reached by other sessions (opened
-      // concurrently or previously) — this session's progress is still
-      // recorded below, but it never gets to consume a view it has no
-      // budget left for.
-    }
+    const consumed =
+      completionPercent >= threshold ? await consumeViewIfWithinLimit(tx, session) : null;
 
     return tx.watchSession.update({
       where: { id: session.id },
       data: {
-        watchedSeconds: params.watchedSeconds,
+        watchedSeconds,
         completionPercent,
-        consumedView: shouldConsume || session.consumedView,
-        viewNumber,
+        ...(consumed ? { consumedView: true, viewNumber: consumed.viewNumber } : {}),
       },
     });
+  });
+}
+
+type Tx = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
+
+/**
+ * Marks a session as a consumed view if the student still has budget for
+ * this video. Serialized per (student, video) with a transaction-scoped
+ * advisory lock: without it, two sessions crossing the threshold at the
+ * same moment could both count "2 used of 3" and both consume, exceeding
+ * the limit. Returns the assigned view number, or null when nothing was
+ * consumed (free video, already consumed, or no budget left).
+ */
+async function consumeViewIfWithinLimit(
+  tx: Tx,
+  session: { id: string; studentId: string; videoId: string; consumedView: boolean; video: { isFree: boolean; viewLimit: number } },
+): Promise<{ viewNumber: number } | null> {
+  if (session.consumedView || session.video.isFree) return null;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`view:${session.studentId}:${session.videoId}`}))`;
+  // Re-read under the lock: another request may have consumed this very
+  // session, or other sessions, a moment ago.
+  const fresh = await tx.watchSession.findUniqueOrThrow({
+    where: { id: session.id },
+    select: { consumedView: true },
+  });
+  if (fresh.consumedView) return null;
+  const consumedCount = await tx.watchSession.count({
+    where: {
+      studentId: session.studentId,
+      videoId: session.videoId,
+      consumedView: true,
+      id: { not: session.id },
+    },
+  });
+  if (consumedCount >= session.video.viewLimit) return null;
+  const viewNumber = consumedCount + 1;
+  await tx.watchSession.update({
+    where: { id: session.id },
+    data: { consumedView: true, viewNumber },
+  });
+  return { viewNumber };
+}
+
+/** The file is tracked in 100 slices; a slice counts once fully delivered. */
+const COVERAGE_BUCKETS = 100;
+
+export function deliveredBuckets(params: { fileSize: number; start: number; bytes: number }): number[] {
+  const { fileSize, start, bytes } = params;
+  if (fileSize <= 0 || bytes <= 0) return [];
+  const end = Math.min(fileSize, start + bytes); // exclusive
+  const buckets: number[] = [];
+  for (let i = 0; i < COVERAGE_BUCKETS; i++) {
+    const bucketStart = Math.floor((i * fileSize) / COVERAGE_BUCKETS);
+    const bucketEnd = Math.floor(((i + 1) * fileSize) / COVERAGE_BUCKETS);
+    if (bucketStart >= start && bucketEnd <= end && (bucketEnd > bucketStart || bucketStart < end)) {
+      buckets.push(i);
+    }
+  }
+  return buckets;
+}
+
+/**
+ * Server-side view accounting, called by the stream route after it has
+ * sent a byte range for a playback session. The delivered slices are
+ * merged atomically into the session; once the session has received at
+ * least the configured threshold of the file, a view is consumed exactly
+ * as if the player had reported that much progress. This is what makes
+ * the view limit hold for a client that never reports progress (or
+ * reports false progress): what counts is what the server delivered.
+ */
+export async function recordDeliveredRange(
+  prisma: PrismaClient,
+  params: { sessionId: string; fileSize: number; start: number; bytes: number },
+): Promise<{ coveragePercent: number; consumedView: boolean }> {
+  const buckets = deliveredBuckets(params);
+  const rows = await prisma.$queryRaw<Array<{ coverage: number }>>`
+    UPDATE "WatchSession"
+    SET "servedBuckets" = ARRAY(
+      SELECT DISTINCT b FROM unnest("servedBuckets" || ${buckets}::int[]) AS b ORDER BY b
+    )
+    WHERE id = ${params.sessionId}
+    RETURNING cardinality("servedBuckets") AS coverage`;
+  if (rows.length === 0) throw new Error("Watch session not found");
+  const coveragePercent = (Number(rows[0].coverage) / COVERAGE_BUCKETS) * 100;
+
+  const threshold = await getPlatformSetting<number>(
+    PLATFORM_SETTING_KEYS.VIEW_CONSUMPTION_THRESHOLD_PERCENT,
+  );
+  if (coveragePercent < threshold) {
+    const current = await prisma.watchSession.findUniqueOrThrow({
+      where: { id: params.sessionId },
+      select: { consumedView: true },
+    });
+    return { coveragePercent, consumedView: current.consumedView };
+  }
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.watchSession.findUniqueOrThrow({
+      where: { id: params.sessionId },
+      include: { video: true },
+    });
+    const consumed = await consumeViewIfWithinLimit(tx, session);
+    return { coveragePercent, consumedView: session.consumedView || consumed !== null };
   });
 }
 

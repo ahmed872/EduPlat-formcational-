@@ -15,14 +15,14 @@ beforeEach(async () => {
 describe("playback token signing", () => {
   it("verifies a token it just issued", () => {
     const exp = Math.floor(Date.now() / 1000) + 60;
-    const token = issuePlaybackToken({ studentId: "s1", videoId: "v1", exp });
+    const token = issuePlaybackToken({ studentId: "s1", videoId: "v1", sessionId: "ws1", exp });
     const payload = verifyPlaybackToken(token);
-    expect(payload).toEqual({ studentId: "s1", videoId: "v1", exp });
+    expect(payload).toEqual({ studentId: "s1", videoId: "v1", sessionId: "ws1", exp });
   });
 
   it("rejects a tampered payload", () => {
     const exp = Math.floor(Date.now() / 1000) + 60;
-    const token = issuePlaybackToken({ studentId: "s1", videoId: "v1", exp });
+    const token = issuePlaybackToken({ studentId: "s1", videoId: "v1", sessionId: "ws1", exp });
     const [payload, signature] = token.split(".");
     const tamperedPayload = Buffer.from(
       JSON.stringify({ studentId: "attacker", videoId: "v1", exp }),
@@ -33,7 +33,7 @@ describe("playback token signing", () => {
 
   it("rejects an expired token", () => {
     const exp = Math.floor(Date.now() / 1000) - 10;
-    const token = issuePlaybackToken({ studentId: "s1", videoId: "v1", exp });
+    const token = issuePlaybackToken({ studentId: "s1", videoId: "v1", sessionId: "ws1", exp });
     expect(verifyPlaybackToken(token)).toBeNull();
   });
 
