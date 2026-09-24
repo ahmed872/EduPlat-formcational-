@@ -4,11 +4,14 @@ import {
   addVideoChapter,
   createLesson,
   deleteExperiment,
+  deleteLessonAttachment,
   deleteVideoChapter,
   uploadLessonVideo,
 } from "../actions";
 import { StatusControls } from "./status-controls";
 import { ExperimentEditor } from "./experiment-editor";
+import { AttachmentUpload } from "./attachment-upload";
+import { ACCEPTED_ATTACHMENT_EXTENSIONS } from "@/lib/business/attachments";
 import { EXPERIMENT_TYPE_LABELS, resolveExperiment } from "@/lib/experiments/definitions";
 
 
@@ -28,6 +31,7 @@ export default async function CourseDetailPage({
           video: { include: { chapters: { orderBy: { order: "asc" } } } },
           requiredPreviousLesson: true,
           experiments: { orderBy: { order: "asc" } },
+          attachments: { orderBy: { createdAt: "asc" } },
         },
       },
     },
@@ -197,6 +201,35 @@ export default async function CourseDetailPage({
                   </form>
                 </div>
               )}
+
+              <div className="mt-3 border-t border-gray-100 pt-3">
+                <p className="mb-2 text-xs font-medium text-gray-600">مرفقات الدرس</p>
+                <ul className="mb-2 flex flex-col gap-1">
+                  {lesson.attachments.map((attachment) => (
+                    <li
+                      key={attachment.id}
+                      data-attachment={attachment.id}
+                      className="flex items-center justify-between text-xs text-gray-600"
+                    >
+                      <a href={`/api/attachments/${attachment.id}`} className="text-indigo-600 hover:underline">
+                        [{attachment.fileType}] {attachment.label ?? attachment.originalName}
+                      </a>
+                      <span className="flex items-center gap-3">
+                        <span className="text-gray-400">{Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB</span>
+                        <form action={deleteLessonAttachment.bind(null, courseId, attachment.id)}>
+                          <button type="submit" className="text-red-500 hover:underline">
+                            حذف
+                          </button>
+                        </form>
+                      </span>
+                    </li>
+                  ))}
+                  {lesson.attachments.length === 0 && (
+                    <li className="text-xs text-gray-400">لا توجد مرفقات بعد.</li>
+                  )}
+                </ul>
+                <AttachmentUpload courseId={courseId} lessonId={lesson.id} accept={ACCEPTED_ATTACHMENT_EXTENSIONS} />
+              </div>
 
               <div className="mt-3 border-t border-gray-100 pt-3">
                 <p className="mb-2 text-xs font-medium text-gray-600">

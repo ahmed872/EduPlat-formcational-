@@ -38,6 +38,17 @@ export async function createParent() {
   return prisma.parentProfile.create({ data: { userId: user.id } });
 }
 
+export async function createTeacher() {
+  return prisma.user.create({
+    data: {
+      email: `${unique("teacher")}@test.local`,
+      name: "Test Teacher",
+      passwordHash: "not-used-in-tests",
+      role: "TEACHER_ADMIN",
+    },
+  });
+}
+
 export async function createCategory() {
   const name = unique("category");
   return prisma.category.create({

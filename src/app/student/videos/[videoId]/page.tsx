@@ -6,6 +6,7 @@ import { PUBLISHED_LESSON_WHERE } from "@/lib/business/content-visibility";
 import { checkVideoAccess } from "@/lib/business/video-access";
 import { canAccessLesson } from "@/lib/business/quiz";
 import { allRequiredExperimentsCompleted, getExperimentsWithStatus } from "@/lib/business/experiment";
+import { listLessonAttachmentsForStudent } from "@/lib/business/attachments";
 import { VideoPlayer } from "./video-player";
 
 export default async function WatchVideoPage({
@@ -80,6 +81,13 @@ export default async function WatchVideoPage({
       ])
     : [null, [], [], [], null];
 
+  // Access-checked inside (entitlement, publication, prerequisite) — returns
+  // nothing for a lesson the student can't use. Independent of the video's
+  // view limit: running out of views doesn't take the lesson's files away.
+  const attachments = video.lesson
+    ? await listLessonAttachmentsForStudent(prisma, { studentId, lessonId: video.lesson.id })
+    : [];
+
   const requiredExperimentsDone = video.lesson
     ? await allRequiredExperimentsCompleted(prisma, {
         studentId,
@@ -110,7 +118,35 @@ export default async function WatchVideoPage({
             <p>يجب إكمال الدرس السابق واجتياز اختباره أولًا للوصول لهذا الدرس.</p>
           )}
         </div>
-      ) : (
+      ) : null}
+
+      {attachments.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4" data-testid="lesson-attachments">
+          <h2 className="mb-2 font-semibold">ملفات الدرس</h2>
+          <ul className="flex flex-col gap-2">
+            {attachments.map((attachment) => (
+              <li key={attachment.id} className="flex items-center justify-between text-sm">
+                <span>
+                  {attachment.label ?? attachment.originalName}{" "}
+                  <span className="text-xs text-gray-400">
+                    ({attachment.fileType} · {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB)
+                  </span>
+                </span>
+                <a
+                  href={attachment.url}
+                  data-attachment-download={attachment.id}
+                  className="rounded-md bg-gray-800 px-3 py-1 text-xs text-white hover:bg-gray-900"
+                >
+                  تنزيل
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-gray-500">روابط التنزيل مؤقتة ومرتبطة بحسابك.</p>
+        </div>
+      )}
+
+      {decision.allowed && (
         <>
           <VideoPlayer
             videoId={video.id}

@@ -24,20 +24,25 @@ export interface StorageProvider {
 }
 
 const VIDEO_STORAGE_ROOT = path.join(process.cwd(), "storage", "videos");
+const ATTACHMENT_STORAGE_ROOT = path.join(process.cwd(), "storage", "attachments");
 
 class LocalPrivateStorageProvider implements StorageProvider {
   readonly name = "LOCAL_PRIVATE";
 
+  constructor(private readonly root: string) {}
+
   private resolvePath(key: string): string {
     // Reject any path traversal attempt — key must be a bare filename.
-    if (key.includes("..") || key.includes("/") || key.includes("\\")) {
+    if (key.includes("..") || key.includes("/") || key.includes("\\") || key.includes("\0")) {
       throw new Error("Invalid storage key");
     }
-    return path.join(VIDEO_STORAGE_ROOT, key);
+    const resolved = path.resolve(this.root, key);
+    if (path.dirname(resolved) !== path.resolve(this.root)) throw new Error("Invalid storage key");
+    return resolved;
   }
 
   async save(key: string, data: Buffer): Promise<void> {
-    await fsp.mkdir(VIDEO_STORAGE_ROOT, { recursive: true });
+    await fsp.mkdir(this.root, { recursive: true });
     await fsp.writeFile(this.resolvePath(key), data);
   }
 
@@ -63,7 +68,8 @@ class LocalPrivateStorageProvider implements StorageProvider {
   }
 }
 
-const localPrivateStorageProvider = new LocalPrivateStorageProvider();
+const localPrivateStorageProvider = new LocalPrivateStorageProvider(VIDEO_STORAGE_ROOT);
+const attachmentStorageProvider = new LocalPrivateStorageProvider(ATTACHMENT_STORAGE_ROOT);
 
 /**
  * A concrete cloud provider (S3, R2, Mux, Cloudflare Stream, ...) is not
@@ -73,4 +79,9 @@ const localPrivateStorageProvider = new LocalPrivateStorageProvider();
  */
 export function getVideoStorageProvider(): StorageProvider {
   return localPrivateStorageProvider;
+}
+
+/** Lesson attachments: same private-disk model, separate root from videos. */
+export function getAttachmentStorageProvider(): StorageProvider {
+  return attachmentStorageProvider;
 }

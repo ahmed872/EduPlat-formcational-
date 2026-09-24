@@ -41,6 +41,8 @@ yarn-error.log*
 # committed; a real deployment points this at real object storage instead
 /storage/videos/*
 !/storage/videos/.gitkeep
+/storage/attachments/*
+!/storage/attachments/.gitkeep
 
 # typescript
 *.tsbuildinfo

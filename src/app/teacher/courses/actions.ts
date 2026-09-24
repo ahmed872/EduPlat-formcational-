@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
-import { getVideoStorageProvider } from "@/lib/storage/provider";
+import { getAttachmentStorageProvider, getVideoStorageProvider } from "@/lib/storage/provider";
+import { newAttachmentStorageKey, validateAttachmentFile } from "@/lib/business/attachments";
 import { setContentStatus, type ContentKind } from "@/lib/business/content-status";
 import type { ContentStatus, ExperimentType } from "@prisma/client";
 import { buildExperimentConfig } from "@/lib/experiments/definitions";
@@ -249,6 +250,72 @@ export async function deleteExperiment(courseId: string, experimentId: string) {
   requireRole(session, ["TEACHER_ADMIN"]);
 
   await prisma.experiment.deleteMany({ where: { id: experimentId, lesson: { courseId } } });
+
+  revalidatePath(`/teacher/courses/${courseId}`);
+}
+
+export type AttachmentFormState = { ok: boolean; message: string } | null;
+
+/** Uploads a lesson attachment into private storage after validating it. */
+export async function uploadLessonAttachment(
+  courseId: string,
+  lessonId: string,
+  _prev: AttachmentFormState,
+  formData: FormData,
+): Promise<AttachmentFormState> {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  const lesson = await prisma.lesson.findFirst({ where: { id: lessonId, courseId }, select: { id: true } });
+  if (!lesson) return { ok: false, message: "الدرس غير موجود في هذا الكورس" };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, message: "الرجاء اختيار ملف" };
+  const label = String(formData.get("label") ?? "").trim().slice(0, 120) || null;
+
+  let detected;
+  const bytes = Buffer.from(await file.arrayBuffer());
+  try {
+    detected = validateAttachmentFile({ name: file.name, bytes });
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
+
+  const storage = getAttachmentStorageProvider();
+  const storageKey = newAttachmentStorageKey(detected.ext);
+  await storage.save(storageKey, bytes);
+  try {
+    await prisma.attachment.create({
+      data: {
+        lessonId,
+        storageKey,
+        originalName: detected.originalName,
+        mimeType: detected.mimeType,
+        fileType: detected.fileType,
+        sizeBytes: bytes.length,
+        label,
+      },
+    });
+  } catch (error) {
+    await storage.delete(storageKey);
+    throw error;
+  }
+
+  revalidatePath(`/teacher/courses/${courseId}`);
+  return { ok: true, message: "تم رفع الملف" };
+}
+
+export async function deleteLessonAttachment(courseId: string, attachmentId: string) {
+  const session = await auth();
+  requireRole(session, ["TEACHER_ADMIN"]);
+
+  const attachment = await prisma.attachment.findFirst({
+    where: { id: attachmentId, lesson: { courseId } },
+    select: { id: true, storageKey: true },
+  });
+  if (!attachment) return;
+  await prisma.attachment.delete({ where: { id: attachment.id } });
+  await getAttachmentStorageProvider().delete(attachment.storageKey);
 
   revalidatePath(`/teacher/courses/${courseId}`);
 }
