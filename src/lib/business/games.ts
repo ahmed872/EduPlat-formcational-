@@ -24,14 +24,33 @@ function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+/**
+ * Which fixed-length "availability window" `date` falls into, for a given
+ * window size — e.g. with the default 60-minute window this is exactly the
+ * UTC clock hour (epoch 0 is itself an hour boundary, so the floor division
+ * lines up with wall-clock hours). Used to give MINI games a real,
+ * DB-enforced "once per hour" gate via GameSession.cooldownBucket, the same
+ * structural pattern DAILY_MAIN's playDate already uses for "once per day".
+ */
+function cooldownBucketFor(date: Date, cooldownMinutes: number): number {
+  return Math.floor(date.getTime() / (cooldownMinutes * 60_000));
+}
+
 export type PlayDecision =
   | { allowed: true }
-  | { allowed: false; reason: "NOT_ACTIVE" | "NOT_OPEN_YET" | "ALREADY_PLAYED_TODAY" };
+  | {
+      allowed: false;
+      reason: "NOT_ACTIVE" | "NOT_OPEN_YET" | "ALREADY_PLAYED_TODAY" | "COOLDOWN_ACTIVE";
+    };
 
 /**
- * MINI games are always replayable. DAILY_MAIN games open at a fixed
+ * MINI games are replayable, but only once per `miniCooldownMinutes`
+ * window (default 60 — "hourly"). DAILY_MAIN games open at a fixed
  * time-of-day and allow exactly one session per calendar day — matching
  * the "daily challenge" concept the schema's dailyOpenTime field implies.
+ * Both checks here are fast, friendly pre-checks for the UI; the actual
+ * enforcement that survives a race is the real DB unique constraint
+ * startGameSession relies on below.
  */
 export async function canPlayGame(
   prisma: PrismaClient,
@@ -45,6 +64,13 @@ export async function canPlayGame(
   }
 
   if (game.type === "MINI") {
+    const currentBucket = cooldownBucketFor(now, game.miniCooldownMinutes);
+    const playedThisWindow = await prisma.gameSession.findFirst({
+      where: { gameId: params.gameId, studentId: params.studentId, cooldownBucket: currentBucket },
+    });
+    if (playedThisWindow) {
+      return { allowed: false, reason: "COOLDOWN_ACTIVE" };
+    }
     return { allowed: true };
   }
 
@@ -84,14 +110,18 @@ export async function startGameSession(
 
   const now = params.now ?? new Date();
   const game = await prisma.game.findUniqueOrThrow({ where: { id: params.gameId } });
-  // DAILY_MAIN sessions get a real playDate, backed by a DB-level
-  // @@unique([gameId, studentId, playDate]) constraint — the earlier
-  // canPlayGame() check above is a fast, friendly rejection, but it is a
-  // plain read that two concurrent requests could both pass (classic
-  // TOCTOU). The unique constraint is what actually prevents two sessions
-  // for the same student+game+day from ever both being created, even
-  // under a genuine race (two tabs/devices tapping "play" at once).
+  // DAILY_MAIN sessions get a real playDate, and MINI sessions get a real
+  // cooldownBucket — each backed by its own DB-level @@unique constraint.
+  // The canPlayGame() check above is a fast, friendly rejection, but it is
+  // a plain read that two concurrent requests could both pass (classic
+  // TOCTOU). The unique constraints are what actually prevent two sessions
+  // for the same student+game+window from ever both being created, even
+  // under a genuine race (two tabs/devices tapping "play" at once) — not a
+  // client-side timer or cooldown, which proves nothing about what the
+  // server will actually accept.
   const playDate = game.type === "DAILY_MAIN" ? startOfDay(now) : null;
+  const cooldownBucket =
+    game.type === "MINI" ? cooldownBucketFor(now, game.miniCooldownMinutes) : null;
 
   try {
     return await prisma.gameSession.create({
@@ -100,14 +130,25 @@ export async function startGameSession(
         studentId: params.studentId,
         startedAt: now,
         playDate,
+        cooldownBucket,
       },
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
-      throw new Error("Cannot start game: ALREADY_PLAYED_TODAY");
+      throw new Error(
+        `Cannot start game: ${game.type === "MINI" ? "COOLDOWN_ACTIVE" : "ALREADY_PLAYED_TODAY"}`,
+      );
     }
     throw error;
   }
+}
+
+/** Small network/latency buffer on top of the game's own durationMinutes —
+ * same idea, and same size, as quiz.ts's SUBMIT_GRACE_SECONDS. */
+const GAME_SUBMIT_GRACE_SECONDS = 20;
+
+function gameDeadlineMs(session: { startedAt: Date }, game: { durationMinutes: number }): number {
+  return session.startedAt.getTime() + game.durationMinutes * 60_000 + GAME_SUBMIT_GRACE_SECONDS * 1000;
 }
 
 /**
@@ -122,10 +163,18 @@ export async function startGameSession(
  * numeric score would otherwise be trusted as-is and credited directly,
  * letting a single forged request award unbounded points that feed
  * leaderboards, Hall-of-Fame candidacy, and points-based achievements.
+ *
+ * The game's own durationMinutes (~5 for MINI, ~10 for DAILY_MAIN, both
+ * teacher-configurable) is also enforced here, server-side, against
+ * session.startedAt — the countdown shown in the player UI is a client-side
+ * convenience only and proves nothing about what the server will accept; a
+ * request submitted after the real deadline earns zero points regardless of
+ * how many answers were correct, so simply holding a session open past its
+ * time limit (to look up answers, ask someone else, etc.) never helps.
  */
 export async function submitGameScore(
   prisma: PrismaClient,
-  params: { sessionId: string; studentId: string; answers: number[] },
+  params: { sessionId: string; studentId: string; answers: number[]; now?: Date },
 ) {
   const session = await prisma.gameSession.findUniqueOrThrow({
     where: { id: params.sessionId },
@@ -138,6 +187,16 @@ export async function submitGameScore(
     throw new Error("تم إنهاء هذه الجلسة بالفعل");
   }
 
+  const now = params.now ?? new Date();
+  const expired = now.getTime() > gameDeadlineMs(session, session.game);
+  if (expired) {
+    await prisma.gameSession.update({
+      where: { id: params.sessionId },
+      data: { endedAt: now, score: 0 },
+    });
+    throw new Error("انتهت مهلة اللعبة، لم يتم اعتماد أي نقاط");
+  }
+
   const config = (session.game.config ?? { questions: [] }) as { questions: GameQuestion[] };
   const questions = config.questions ?? [];
   const score = questions.reduce(
@@ -148,7 +207,7 @@ export async function submitGameScore(
   const [updated] = await prisma.$transaction([
     prisma.gameSession.update({
       where: { id: params.sessionId },
-      data: { endedAt: new Date(), score },
+      data: { endedAt: now, score },
     }),
     prisma.studentProfile.update({
       where: { id: params.studentId },

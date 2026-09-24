@@ -23,6 +23,7 @@ export function GameRunner({
   const [finished, setFinished] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [finalScore, setFinalScore] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   // The correct answer key is never sent to this component — the server
   // grades `answers` (the student's own choice per question) against the
   // real key and returns/derives the actual score itself.
@@ -40,9 +41,19 @@ export function GameRunner({
     if (finished) return;
     setFinished(true);
     setSubmitting(true);
-    const result = await finishPlay(gameId, sessionId, answersRef.current);
-    setFinalScore(result.score);
-    setSubmitting(false);
+    try {
+      const result = await finishPlay(gameId, sessionId, answersRef.current);
+      setFinalScore(result.score);
+    } catch (err) {
+      // The countdown shown here is a UI convenience only — the server
+      // independently enforces the real deadline and rejects a late
+      // submission with zero points, which can legitimately happen if the
+      // request was delayed in flight even though this timer read >0.
+      setError(err instanceof Error ? err.message : "حدث خطأ أثناء إنهاء اللعبة");
+      setFinalScore(0);
+    } finally {
+      setSubmitting(false);
+    }
     router.refresh();
   }
 
@@ -66,7 +77,9 @@ export function GameRunner({
         <p className="text-lg font-semibold">
           {submitting || finalScore === null
             ? "جارٍ الحفظ..."
-            : `انتهت اللعبة! نتيجتك: ${finalScore}`}
+            : error
+              ? error
+              : `انتهت اللعبة! نتيجتك: ${finalScore}`}
         </p>
       </div>
     );

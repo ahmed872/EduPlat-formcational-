@@ -9,8 +9,8 @@ import {
 } from "./actions";
 
 const TYPE_LABELS: Record<string, string> = {
-  MINI: "لعبة سريعة (تُلعب في أي وقت)",
-  DAILY_MAIN: "التحدي اليومي (مرة واحدة يوميًا)",
+  MINI: "لعبة سريعة (~5 دقائق، مرة كل ساعة)",
+  DAILY_MAIN: "التحدي اليومي (~10 دقائق، مرة واحدة يوميًا)",
 };
 
 export default async function TeacherGamesPage() {
@@ -56,11 +56,23 @@ export default async function TeacherGamesPage() {
           <input type="time" name="dailyOpenTime" className="rounded-md border border-gray-300 px-3 py-2" />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-sm text-gray-600">المدة (دقيقة)</span>
+          <span className="text-sm text-gray-600">المدة (دقيقة) — تُفرض من السيرفر</span>
           <input
             type="number"
             name="durationMinutes"
             defaultValue={10}
+            min="1"
+            className="w-24 rounded-md border border-gray-300 px-3 py-2"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-gray-600">
+            فترة الانتظار بين المحاولات بالدقائق (للعبة السريعة فقط)
+          </span>
+          <input
+            type="number"
+            name="miniCooldownMinutes"
+            defaultValue={60}
             min="1"
             className="w-24 rounded-md border border-gray-300 px-3 py-2"
           />
@@ -84,7 +96,8 @@ export default async function TeacherGamesPage() {
                   <p className="text-xs text-gray-500">
                     {TYPE_LABELS[game.type] ?? game.type}
                     {game.dailyOpenTime && ` · يفتح الساعة ${game.dailyOpenTime}`}
-                    {` · ${game.durationMinutes} دقيقة · ${game.sessions.length} محاولة`}
+                    {game.type === "MINI" && ` · مرة كل ${game.miniCooldownMinutes} دقيقة`}
+                    {` · ${game.durationMinutes} دقيقة للعب · ${game.sessions.length} محاولة`}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">

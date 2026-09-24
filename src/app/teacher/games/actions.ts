@@ -18,7 +18,16 @@ export async function createGame(formData: FormData) {
 
   const dailyOpenTime =
     type === "DAILY_MAIN" ? String(formData.get("dailyOpenTime") ?? "") || null : null;
-  const durationMinutes = Number(formData.get("durationMinutes") ?? 10);
+  if (type !== "MINI" && type !== "DAILY_MAIN") throw new Error("نوع لعبة غير صالح");
+
+  const durationMinutes = Number(formData.get("durationMinutes") || (type === "MINI" ? 5 : 10));
+  const miniCooldownMinutes = Number(formData.get("miniCooldownMinutes") || 60);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 180) {
+    throw new Error("مدة اللعبة يجب أن تكون بين 1 و180 دقيقة");
+  }
+  if (!Number.isInteger(miniCooldownMinutes) || miniCooldownMinutes < 1 || miniCooldownMinutes > 1440) {
+    throw new Error("فترة الانتظار يجب أن تكون بين 1 و1440 دقيقة");
+  }
 
   await prisma.game.create({
     data: {
@@ -26,6 +35,7 @@ export async function createGame(formData: FormData) {
       name,
       dailyOpenTime,
       durationMinutes,
+      miniCooldownMinutes,
       config: { questions: [] },
     },
   });

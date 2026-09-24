@@ -58,6 +58,8 @@ export default async function PlayGamePage({
           {decision.reason === "NOT_ACTIVE" && "هذه اللعبة غير متاحة حاليًا."}
           {decision.reason === "NOT_OPEN_YET" && "لم يحن وقت فتح هذا التحدي اليوم بعد."}
           {decision.reason === "ALREADY_PLAYED_TODAY" && "لقد لعبت هذا التحدي اليوم بالفعل."}
+          {decision.reason === "COOLDOWN_ACTIVE" &&
+            `لقد لعبت هذه اللعبة مؤخرًا — يمكنك إعادة المحاولة بعد قليل (كل ${game.miniCooldownMinutes} دقيقة).`}
         </p>
       )}
     </div>

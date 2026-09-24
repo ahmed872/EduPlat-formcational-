@@ -761,13 +761,18 @@ enum GameType {
 }
 
 model Game {
-  id              String   @id @default(cuid())
-  type            GameType
-  name            String
-  config          Json?
-  dailyOpenTime   String? // "HH:MM" for DAILY_MAIN
-  durationMinutes Int      @default(10)
-  active          Boolean  @default(true)
+  id                  String   @id @default(cuid())
+  type                GameType
+  name                String
+  config              Json?
+  dailyOpenTime       String? // "HH:MM" for DAILY_MAIN
+  durationMinutes     Int      @default(10)
+  // MINI only: length in minutes of the "hourly" availability window a
+  // student can play at most once inside (see GameSession.cooldownBucket).
+  // Meaningless for DAILY_MAIN, which uses dailyOpenTime + the real
+  // once-per-calendar-day constraint instead.
+  miniCooldownMinutes Int      @default(60)
+  active              Boolean  @default(true)
 
   sessions             GameSession[]
   leaderboardSnapshots LeaderboardSnapshot[]
@@ -787,8 +792,17 @@ model GameSession {
   // MINI sessions (always replayable), which never collide with each other
   // since Postgres treats each NULL as distinct for uniqueness purposes.
   playDate  DateTime?
+  // MINI only: floor(startedAt.getTime() / (game.miniCooldownMinutes * 60_000))
+  // at the moment the session was created — a discrete "which cooldown
+  // window was this play in" bucket, backing a real DB-level "at most one
+  // MINI session per game per student per cooldown window" guarantee below,
+  // the same real-constraint pattern playDate uses for DAILY_MAIN (an
+  // app-level check alone is a classic TOCTOU race two concurrent requests
+  // could both slip past). Left null for DAILY_MAIN sessions.
+  cooldownBucket Int?
 
   @@unique([gameId, studentId, playDate])
+  @@unique([gameId, studentId, cooldownBucket])
   @@index([gameId, studentId])
 }
 
