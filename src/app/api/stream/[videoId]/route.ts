@@ -1,5 +1,3 @@
-import type { NextRequest } from "next/server";
-import type { Session } from "next-auth";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { checkVideoAccess } from "@/lib/business/video-access";
@@ -14,12 +12,16 @@ import { streamFileResponse } from "@/lib/http/range-stream";
  * re-verifies the student's entitlement server-side before streaming a
  * single byte, so a token cannot outlive an access change (refund,
  * revocation, view-limit newly reached by a concurrent session).
+ *
+ * Wrapped with `auth()`'s middleware form (rather than calling the no-arg
+ * `auth()` inside the body) so the session is decoded directly from the
+ * request's cookies, not from Next's request-scoped `headers()` context —
+ * this is what makes it possible to actually unit-test the session-binding
+ * rule below with a real signed cookie, which is exactly the test coverage
+ * the original audit said was missing to safely make this change.
  */
-export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ videoId: string }> },
-) {
-  const { videoId } = await context.params;
+export const GET = auth(async function GET(request, context) {
+  const { videoId } = (await context.params) as { videoId: string };
   const token = request.nextUrl.searchParams.get("token");
   if (!token) return new Response("Missing playback token", { status: 401 });
 
@@ -28,24 +30,15 @@ export async function GET(
     return new Response("Invalid or expired playback token", { status: 401 });
   }
 
-  // Defense in depth: if a session cookie is present, it must belong to the
-  // same student the token was issued for (a token alone is enough to
-  // stream, since a <video> element cannot attach custom auth headers, but
-  // this stops a copy-pasted URL from silently working under someone
-  // else's logged-in session on this same site).
-  // auth() with no args reads the request-scoped headers() API, which
-  // only exists inside Next's real App Router request handling (not when
-  // this handler is invoked directly, e.g. from a unit test) — treat that
-  // as "no session info available" rather than letting it crash the
-  // request, since the token + entitlement checks below are the actual
-  // security boundary; this is purely additional hardening.
-  let session: Session | null = null;
-  try {
-    session = await auth();
-  } catch {
-    session = null;
-  }
-  if (session?.user && session.user.studentProfileId !== payload.studentId) {
+  // A signed token alone is not proof of the *current* viewer's identity —
+  // a real, live session matching the token's studentId is required
+  // unconditionally, not only when a cookie happens to be present. Without
+  // this, a copy-pasted URL worked for any bearer — logged in or not — for
+  // the token's full 4-hour lifetime, as long as the underlying entitlement
+  // was still active (the gap fixed here). `request.auth` also carries the
+  // live blocked-status re-check from auth.ts's session callback, so a
+  // blocked student's still-valid cookie is rejected here too.
+  if (request.auth?.user?.studentProfileId !== payload.studentId) {
     return new Response("Token does not match the current session", { status: 403 });
   }
 
@@ -65,4 +58,4 @@ export async function GET(
     video.storageKey,
     request.headers.get("range"),
   );
-}
+});
