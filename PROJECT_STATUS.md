@@ -5,9 +5,11 @@ Last updated: 2026-09-20 (Final Full-System Audit session)
 ## Current phase
 
 A full independent audit and hardening pass has been completed on top of
-all 21 originally-enumerated phases — see "Final full-system audit" below
-and `FINAL_AUDIT_REPORT.md` for the complete Requirement Coverage Matrix,
-findings, and remaining gaps. Phase 21 (Advanced Security) itself
+all 21 originally-enumerated phases, followed by an approved gap-closure
+round that closed seven of its twelve remaining gaps. See "Final
+full-system audit" and "Gap-closure round" below, and
+`FINAL_AUDIT_REPORT.md`, for the complete Requirement Coverage Matrix,
+findings, and what remains open. Phase 21 (Advanced Security) itself
 completed the originally-enumerated 21-phase plan. It builds on Phase 20 (Search),
 Phase 19 (Notifications &
 Announcements), Phase 18 (Store), Phase 17 (Teacher Profile &
@@ -1090,6 +1092,47 @@ support ownership) found and this session fixed:
   PARTIAL / NOT IMPLEMENTED / BLOCKED BY EXTERNAL INFRASTRUCTURE with
   evidence) lives in `FINAL_AUDIT_REPORT.md` at the repo root.
 
+### Gap-closure round (2026-09-24)
+
+Seven of the audit's twelve remaining gaps were closed. #2, #4, #5, #6
+and #7 were required; #1 and #3 were done because they were low-risk.
+Each has regression tests, and the security- and race-related ones fail
+against the pre-fix code.
+
+- **Gap #2, signed video URL:** `/api/stream/[videoId]` now requires a
+  live session matching the token's student on every request. The route
+  is wrapped with `auth()`'s middleware form so the rule is unit-testable
+  with a real signed cookie (`src/test/session.ts`).
+- **Gap #4, reports vs analytics:** both now count lessons and quizzes
+  over the same `getEnrolledPublishedLessonIds` set.
+- **Gap #5, MINI vs DAILY_MAIN:** each game's duration is enforced on
+  submit using server time, so a late submit earns 0 points and the
+  countdown is display-only. MINI is limited to once per
+  `miniCooldownMinutes` window (default 60) by a real DB unique
+  constraint. DAILY_MAIN keeps its opening time and once-per-day rule.
+- **Gap #6, career fields:** `updateCareerField` edits in place, keeping
+  the id so past exploration results still resolve. Roadmap and resources
+  are editable and shown to students, and resource URLs are http(s) only.
+- **Gap #7, teacher profile:** contact info, social links and teaching
+  locations/schedules are editable and shown on the public profile.
+  Links are http(s) only; email and phone are validated.
+- **Gap #1, batch grant:** a new lesson can be granted in one step to
+  every active subscriber of its course. It is idempotent, expires with
+  each student's subscription, and is audit-logged.
+- **Gap #3, TARGET_REACHED:** now once-only via `@@unique([userId, dedupeKey])`.
+- Two additive migrations: `20260924000000_game_mini_cooldown` and
+  `20260924000100_notification_dedupe_key`.
+- **#8/#9/#10 assessed and left unchanged:** each needs a product decision
+  or production-data verification. None is a live bug. Reasons are in
+  `FINAL_AUDIT_REPORT.md`.
+- **#11** (CAPTCHA) is an external security enhancement and **#12** is
+  external infrastructure; neither is faked.
+- **New finding from E2E:** a rare Auth.js `MissingCSRF` race on the
+  first login in a fresh browser (1 in 34 logins). It fails closed and a
+  retry works. It's documented and not fixed, because it's outside the
+  approved scope.
+- Tests went from 238 to 270, all passing, and browser E2E is 26/26.
+
 ## Not started (by priority order, all schema-ready)
 
 Real payment gateway integration, concurrent-session detection, HLS/DRM.
@@ -1265,7 +1308,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 238/238 passing (29 files)
+npx vitest run       # 270/270 passing (29 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1307,18 +1350,16 @@ Full narrative and the one real bug this pass caught are in
 
 ## Next recommended step
 
-All 21 originally-enumerated phases are complete, and a full independent
-audit-and-hardening pass on top of them is also complete (see "Final
-full-system audit" above and `FINAL_AUDIT_REPORT.md`). There is no further
-phase queued by the original spec. Any future work should come from a
-fresh, explicit request. If asked for a starting point, the highest-value
-options — in rough priority order — are: (1) a real payment gateway
-integration, (2) aligning `reports.ts`'s query scoping with
-`analytics.ts`'s to remove the metrics-divergence gap, (3) a
-`CareerField` update action + `TeacherProfile` social/contact/location
-edit UI, (4) tightening the signed-video-URL check to require a matching
-session unconditionally, and (5) concurrent-session detection (would
-require switching from JWT to database-backed sessions — a real
-architectural change, not an extension of what exists). All of these are
-precisely scoped, honestly-documented remaining gaps, not missing
-features that were skipped or hidden.
+All 21 phases, the full audit, and the approved gap-closure round are
+complete. No further work is queued. What remains open, and what each
+item needs before it can move:
+1. **Product decisions:** gap #8 (Entitlement delete behavior), the
+   `onDelete` behavior for gap #9's FKs, and whether promo percentages may
+   be fractional (gap #10).
+2. **Scope decision:** whether to fix the Auth.js `MissingCSRF`
+   first-login race (#13). The suggested fix is to retry `signIn` once
+   in `login-form.tsx`.
+3. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron,
+   PDF generation, and CAPTCHA.
+4. **Architectural change:** concurrent-session detection, which would
+   mean moving off JWT sessions.

@@ -66,19 +66,18 @@ interpolates table names read back from `pg_tables`, never user input.
   deterrent against casual screen-recording redistribution, not a
   cryptographic protection, and is described as such here rather than
   oversold.
-- **Known, honest gap (found in the final audit, not yet fixed)**: the
-  "token must match the current session" check in the streaming route
-  only runs when a session cookie is present at all — it is skipped
-  entirely for a request with none. This means a copied playback URL
-  works for any bearer, logged in or not, for the token's full lifetime
-  (currently 4 hours), as long as the underlying entitlement is still
-  active. Entitlement/refund/view-limit re-verification (above) is
-  unaffected by this — it still runs unconditionally on every request —
-  so this is a link-sharing risk, not an access-control bypass. The fix
-  (require a session matching the token's studentId unconditionally,
-  since a real viewer is always logged in anyway) was scoped but not
-  applied this audit for lack of test coverage on this specific route to
-  safely validate the change against.
+- **Session binding (fixed in the gap-closure round)**: every stream
+  request must carry a live session whose `studentProfileId` matches the
+  token's `studentId` — unconditionally. Previously this check was
+  skipped when no session cookie was present, so a copied playback URL
+  worked for any bearer, logged in or not, for the token's full 4-hour
+  lifetime. The route is now wrapped with `auth()`'s middleware form, which
+  decodes the session straight from the request cookies (this is what
+  made the rule unit-testable with a real signed cookie), and it inherits
+  the live blocked-account re-check from `auth.ts`. Covered by unit tests
+  (no cookie → 403, another student's session → 403, blocked student →
+  403) and by a browser E2E step. A logged-in student can still use their
+  own URL for its lifetime; a copied link no longer works for anyone else.
 - **Not yet implemented**: HLS/DASH segmenting (needs a real media
   pipeline — no `ffmpeg` or transcoding service is available in this
   environment), concurrent-session/device-limit detection, and real DRM
@@ -146,11 +145,34 @@ change.
   email blocks further attempts regardless of whether a later password
   would have been correct. Blocking an account now also invalidates an
   already-issued session on its very next request, not just future logins.
+- Game timing is server-authoritative: each session's `durationMinutes`
+  (~5 for MINI, ~10 for DAILY_MAIN) is enforced against `startedAt` when
+  the score is submitted, using server time only, and a late submission
+  earns zero points. MINI's once-per-hour window and DAILY_MAIN's
+  once-per-day rule are both real DB unique constraints. The countdown in
+  the player is display-only.
+- User-supplied links that are rendered as `href`s (career-field
+  resources, teacher social links) accept only `http(s)` URLs, validated
+  in the business layer and filtered again on read, so a `javascript:` URL
+  can never reach the page. Teacher phone/email are pattern-validated
+  before being rendered into `tel:`/`mailto:` links.
 - **Not yet implemented**: concurrent-session/device-change detection (see
   the "Not yet implemented" note above — would require moving off
   stateless JWT sessions). No automatic banning exists anywhere in the
   codebase — the spec explicitly requires human review for weak signals,
   and no such automation has been built to bypass that.
+- **Known third-party issue (observed, not fixed)**: Auth.js v5 issues a
+  fresh CSRF cookie on *any* auth request that lacks one, so on the very
+  first login in a brand-new browser, concurrent `/api/auth/session` and
+  `/api/auth/csrf` requests can set two different tokens. If the wrong one
+  wins, the login POST is rejected with `MissingCSRF` and the form shows
+  the generic "wrong email or password" message; a retry succeeds. Seen
+  once in 34 logins during E2E runs and reproduced directly with two
+  concurrent requests. It fails closed (never lets an unauthenticated
+  request through), so it is a UX issue, not a vulnerability.
+- **External security enhancement (not in the original requirements)**: no
+  CAPTCHA on registration. Adding one needs an external provider
+  (reCAPTCHA/hCaptcha/Turnstile).
 
 ## Known dependency advisories
 
