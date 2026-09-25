@@ -208,6 +208,25 @@ change.
 
 ## Anti-abuse (current state)
 
+- **View limit, server-authoritative (re-fixed 2026-09-25).** Until then,
+  views were consumed only when the player reported progress. A client
+  that skipped that call, or reported an inflated duration, could stream
+  a paid video without limit: reproduced, 6 full streams with 0 views
+  consumed. Now:
+  - every playback URL is bound to its own `WatchSession` inside the
+    signed token;
+  - the stream route records which 1% slices of the file it actually
+    delivered, and consumes a view once the configured threshold
+    (default 80%) of the bytes has been received;
+  - player-reported progress still counts too, using the server's
+    duration when one is known;
+  - consumption is serialized per student+video with an advisory lock,
+    and the session that used the last allowed view may finish it.
+
+  Trade-off: for very small files, browser prefetch can count a view near
+  playback start. Opening a page without receiving the video still never
+  consumes a view. The paragraph below describes the earlier fix, which
+  still applies.
 - View-limit consumption requires crossing a configurable completion
   threshold (default 80%) — opening a page alone can never consume a paid
   view. The limit itself is re-checked atomically, inside a transaction,
@@ -271,6 +290,57 @@ change.
 - **External security enhancement (not in the original requirements)**: no
   CAPTCHA on registration. Adding one needs an external provider
   (reCAPTCHA/hCaptcha/Turnstile).
+
+## Deployment hardening (2026-09-25)
+
+- **Startup validation** (`src/instrumentation.ts` → `src/lib/startup.ts`
+  and `src/lib/env.ts`):
+  - checks `DATABASE_URL`, `AUTH_SECRET` (at least 32 characters, not the
+    placeholder), `AUTH_TRUST_HOST` / `AUTH_URL`, URL formats and an
+    absolute `STORAGE_ROOT`;
+  - probes that private storage is writable (bounded to 5 seconds);
+  - in production any failure exits the process;
+  - messages name variables, never values. Verified with the secret
+    grepped from the logs: 0 occurrences.
+- **No default admin in production:** the seed requires
+  `SEED_TEACHER_EMAIL` / `SEED_TEACHER_PASSWORD` (at least 12 characters)
+  when `NODE_ENV=production` and never prints the password. The
+  development default `ChangeMe123!` is for local use only.
+- **Private files** are created owner-only (directories 700, files 600)
+  under `STORAGE_ROOT`. Raw storage paths are never served; verified over
+  HTTP for videos and attachments.
+- **Security headers** on every response:
+  - `X-Frame-Options: DENY`;
+  - CSP `frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+    object-src 'none'`;
+  - `X-Content-Type-Options: nosniff` and
+    `Referrer-Policy: strict-origin-when-cross-origin`;
+  - a restrictive `Permissions-Policy`, and HSTS in production;
+  - `X-Powered-By` removed.
+
+  **Follow-up:** a `script-src` CSP needs per-request nonces through
+  every page and is not in place.
+- **Logging:** server errors are logged as one JSON line each (method,
+  path **without query string**, route, digest, message), because signed
+  playback and download tokens live in query strings. Headers and
+  cookies are never logged. `/api/health` reports only ok/unavailable.
+- **Error pages:** Arabic `error.tsx` / `global-error.tsx` /
+  `not-found.tsx`. In production only a reference digest is shown, never
+  the internal message.
+- **Checkout integrity:**
+  - a subscription is never sold once the academic-year end has passed;
+  - at most one open (pending or unexpired active) subscription per
+    student and plan, enforced server-side under an advisory lock;
+  - verified by replaying the real Server Action in parallel.
+- **Upload limits:** the Server Action body limit is 500 MB globally
+  (needed for video upload). The reverse proxy must enforce per-path
+  limits (DEPLOYMENT.md §5). Attachments are also capped at 25 MB in code.
+- **Rate limits:** in-app login throttling only. Registration,
+  heartbeats and playback-URL issuance rely on proxy rate limits
+  (DEPLOYMENT.md §5).
+- **Not implemented:** password reset / change for any role (needs an
+  email/SMS provider or an owner decision; see the go-live checklist) and
+  CAPTCHA.
 
 ## Known dependency advisories
 

@@ -1,6 +1,6 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-25 (MUST FIX / SHOULD FIX round)
+Last updated: 2026-09-25 (production readiness & deployment audit)
 
 ## Current phase
 
@@ -1226,6 +1226,47 @@ against the pre-fix code.
 **Deployment note:** `next start` needs `AUTH_TRUST_HOST=true` (or
 `AUTH_URL`). It is documented in `.env.example` and SECURITY.md.
 
+### Production readiness & deployment audit (2026-09-25)
+
+This round verified the platform the way a production launch would:
+- a fresh deployment on an empty database;
+- an upgrade of a populated database, with backup/restore and a tested
+  failure recovery;
+- full role journeys, including the manual/offline payment flow, which
+  is never presented as a gateway;
+- HTTP-level attack and concurrency runs;
+- a mobile and accessibility audit, plus latency measurements.
+
+**Real defects fixed**, each with a regression test (details in
+FINAL_AUDIT_REPORT.md → Production Readiness):
+- The paid-video view limit was still client-trusted. Views are now
+  counted from the bytes the server delivers per playback session, under
+  an advisory lock, and the final paid view can be finished.
+- The seed's default admin password in production.
+- No startup validation or `STORAGE_ROOT`; world-readable private files.
+- Dead-on-arrival and duplicate subscription checkouts.
+- Students were not told that payment is manual.
+- The teacher analytics overview ran about 3 queries per student per
+  course (6,120 queries → 140).
+- Missing security headers and Arabic error/404 pages.
+- Broken mobile layouts (student pages 981 px wider than a phone), and
+  serious contrast/ARIA issues.
+- No health endpoint.
+
+**Deployment:** see **DEPLOYMENT.md** (environment variables, migrations,
+startup, storage, reverse proxy limits, backup/restore, smoke tests,
+rollback, external integration options, go-live checklist).
+
+**Owner decisions / external providers required before launch:**
+- password recovery (none exists);
+- manual vs online payments;
+- TLS domain + proxy;
+- production Postgres with scheduled backups;
+- a persistent storage volume.
+
+Video transcoding/HLS/CDN/DRM, email/SMS, scheduled jobs and CAPTCHA are
+external and optional for a small launch.
+
 ## Not started (by priority order, all schema-ready)
 
 Real payment gateway integration, concurrent-session detection, HLS/DRM.
@@ -1407,7 +1448,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 417/417 passing (35 files)
+npx vitest run       # 446/446 passing (39 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1448,7 +1489,16 @@ Full narrative and the one real bug this pass caught are in
 `FINAL_AUDIT_REPORT.md`'s "E2E Findings" section.
 
 Browser E2E (Playwright, production build via `next start`, dev
-database), 2026-09-25 round:
+database), production-readiness round:
+- MUST FIX suite: 32/32.
+- Full role journey: 12/12.
+- HTTP security/concurrency stress: 10/10.
+- Original targeted suite: 26/26.
+- CSRF login suite: 5/5.
+- Mobile/accessibility audit: 21 pages, 0 px overflow, no serious or
+  critical axe violations.
+
+Earlier (MUST FIX round):
 - MUST FIX suite: 32/32 steps passing, covering MF#1–#5 and the SHOULD FIX schema
   work, including direct API / server-action replay negatives.
 - Original targeted suite: 26/26.
@@ -1459,8 +1509,12 @@ database), 2026-09-25 round:
 All 21 phases, the full audit, and the approved gap-closure round are
 complete. No further work is queued. What remains open, and what each
 item needs before it can move:
-1. **Product decision:** whether promo percentages may be fractional
-   (`PromoCode.value`, intentionally unchanged).
+1. **Owner decisions:**
+   - password recovery (FINAL_AUDIT_REPORT #50);
+   - manual vs online payments (#49);
+   - whether promo percentages may be fractional (`PromoCode.value`,
+     intentionally unchanged).
+   Then complete the DEPLOYMENT.md §12 go-live checklist.
 2. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron, and
    CAPTCHA (PDF is handled in-app by the browser print flow).
 3. **Architectural change:** concurrent-session detection, which would

@@ -132,9 +132,20 @@ failed deploy leaves the database untouched:
 | `20260925020000_certificate_revocation` | `Certificate.revokedAt` / `revokedReason` | additive |
 | `20260925030000_user_relation_foreign_keys` | 7 User FKs + Entitlement RESTRICT | aborts listing each column with orphaned ids |
 | `20260925040000_referral_reward_types` | `rewardType` → enum, `rewardValue` → `INTEGER`, converted in place with `USING` | aborts on unknown types or non-integer / out-of-range values |
+| `20260926000000_watch_session_served_buckets` | `WatchSession.servedBuckets INTEGER[]` (server-delivered coverage for view accounting) | additive |
 
 Before the FK migration was written, the development data was checked
 with an orphan query per column (all 0); both guards were also exercised
 against deliberately broken rows inside a rolled-back transaction.
 `PromoCode.value` is intentionally unchanged (its meaning depends on
 `type`, which is a product decision, not a typing fix).
+
+All 19 migrations were verified end-to-end twice:
+- `migrate deploy` on an empty database;
+- an upgrade of a populated copy (2,002 users, 20,000 watch sessions),
+  with row counts identical afterwards.
+
+A deliberately orphaned row made the FK migration abort before its DDL.
+Recovery was then exercised: repair the data,
+`migrate resolve --rolled-back <name>`, `migrate deploy`. The exact
+procedure is in DEPLOYMENT.md §4.
