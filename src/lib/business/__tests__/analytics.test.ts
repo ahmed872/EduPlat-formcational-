@@ -217,3 +217,39 @@ describe("getCourseAnalyticsForTeacher", () => {
     expect(analytics.averageCompletionPercentage).toBe(0);
   });
 });
+
+describe("teacher course analytics — batched queries", () => {
+  it("per-student figures equal the single-student computation, with a constant number of queries", async () => {
+    const course = await createCourse();
+    const lessons = await Promise.all([1, 2, 3].map(() => createLesson({ courseId: course.id })));
+    const draft = await createLesson({ courseId: course.id, status: "DRAFT" });
+    const quizzes = await Promise.all(lessons.map((l) => createQuiz({ lessonId: l.id })));
+    const students = await Promise.all(Array.from({ length: 6 }, () => createStudent()));
+    for (const [i, s] of students.entries()) {
+      for (const l of lessons) await entitle(s.id, l.id);
+      for (const l of lessons.slice(0, i % 4)) await markLessonCompleted(s.id, l.id);
+      if (i % 2 === 0) await markLessonCompleted(s.id, draft.id); // unpublished lesson never counts
+      if (i > 0) await gradeQuizAttempt({ quizId: quizzes[i % 3].id, studentId: s.id, percentage: 10 * i, passed: i > 2 });
+      if (i > 3) {
+        await prisma.quizAttempt.create({
+          data: { quizId: quizzes[0].id, studentId: s.id, attemptNumber: 2, status: "GRADED", percentage: 95, passed: true, submittedAt: new Date() },
+        });
+      }
+    }
+
+    let queries = 0;
+    const counted = prisma.$extends({
+      query: { $allOperations: async ({ args, query }) => { queries++; return query(args); } },
+    }) as unknown as typeof prisma;
+    const teacherView = await getCourseAnalyticsForTeacher(counted, course.id);
+
+    expect(teacherView.students).toHaveLength(6);
+    for (const row of teacherView.students) {
+      const single = await getStudentCourseAnalytics(prisma, { studentId: row.studentId, courseId: course.id });
+      expect(row.completionPercentage).toBeCloseTo(single.completionPercentage, 10);
+      expect(row.averageQuizPercentage).toEqual(single.averageQuizPercentage);
+    }
+    // Independent of the number of students (was ~3 queries per student).
+    expect(queries).toBeLessThanOrEqual(8);
+  });
+});

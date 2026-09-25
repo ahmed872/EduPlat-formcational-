@@ -172,6 +172,7 @@ export async function getCourseAnalyticsForTeacher(
     prisma.entitlement.findMany({
       where: { revokedAt: null, lesson: { courseId } },
       select: { studentId: true },
+      distinct: ["studentId"],
     }),
     // Free lessons never create an Entitlement row, so a student who only
     // watched free content in this course would otherwise never count as
@@ -179,6 +180,7 @@ export async function getCourseAnalyticsForTeacher(
     prisma.watchSession.findMany({
       where: { video: { lesson: { courseId } } },
       select: { studentId: true },
+      distinct: ["studentId"],
     }),
   ]);
 
@@ -190,13 +192,25 @@ export async function getCourseAnalyticsForTeacher(
   );
   const lessonIds = lessons.map((l) => l.id);
 
-  const [progressRows, students] = await Promise.all([
+  // One query per table for the whole course — not one set per student.
+  // The per-student figures below use exactly the same definitions as
+  // computeCourseAnalyticsForStudent (published lessons of this course,
+  // COMPLETED progress, GRADED attempts on those lessons' quizzes).
+  const [progressRows, students, gradedAttempts] = await Promise.all([
     prisma.lessonProgress.findMany({
       where: { lessonId: { in: lessonIds }, studentId: { in: enrolledStudentIds } },
     }),
     prisma.studentProfile.findMany({
       where: { id: { in: enrolledStudentIds } },
-      include: { user: true },
+      select: { id: true, user: { select: { name: true } } },
+    }),
+    prisma.quizAttempt.findMany({
+      where: {
+        studentId: { in: enrolledStudentIds },
+        status: "GRADED",
+        quiz: { lessonId: { in: lessonIds } },
+      },
+      select: { studentId: true, percentage: true },
     }),
   ]);
 
@@ -213,20 +227,28 @@ export async function getCourseAnalyticsForTeacher(
     };
   });
 
-  const studentBreakdown = await Promise.all(
-    students.map(async (student) => {
-      const stats = await computeCourseAnalyticsForStudent(prisma, {
-        studentId: student.id,
-        courseId,
-      });
-      return {
-        studentId: student.id,
-        name: student.user.name,
-        completionPercentage: stats.completionPercentage,
-        averageQuizPercentage: stats.averageQuizPercentage,
-      };
-    }),
-  );
+  const completedByStudent = new Map<string, number>();
+  for (const p of progressRows) {
+    if (p.status === "COMPLETED") completedByStudent.set(p.studentId, (completedByStudent.get(p.studentId) ?? 0) + 1);
+  }
+  const attemptsByStudent = new Map<string, number[]>();
+  for (const a of gradedAttempts) {
+    const list = attemptsByStudent.get(a.studentId) ?? [];
+    list.push(a.percentage ?? 0);
+    attemptsByStudent.set(a.studentId, list);
+  }
+  const studentBreakdown = students.map((student) => {
+    const completed = completedByStudent.get(student.id) ?? 0;
+    const percentages = attemptsByStudent.get(student.id) ?? [];
+    return {
+      studentId: student.id,
+      name: student.user.name,
+      completionPercentage: lessonIds.length > 0 ? (completed / lessonIds.length) * 100 : 0,
+      averageQuizPercentage: percentages.length
+        ? percentages.reduce((sum, x) => sum + x, 0) / percentages.length
+        : null,
+    };
+  });
 
   const averageCompletionPercentage = studentBreakdown.length
     ? studentBreakdown.reduce((sum, s) => sum + s.completionPercentage, 0) / studentBreakdown.length
