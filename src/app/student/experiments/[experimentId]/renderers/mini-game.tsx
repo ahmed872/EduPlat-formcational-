@@ -106,7 +106,7 @@ export function MiniGameRenderer({
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-indigo-100 bg-white p-4" data-testid="mini-game">
       <div className="flex items-center justify-between text-sm">
-        <span aria-label="المحاولات المتبقية" className="text-lg text-red-500">
+        <span aria-label="المحاولات المتبقية" className="text-lg text-red-600">
           {"♥".repeat(Math.max(0, state.livesLeft))}
           <span className="text-gray-300">{"♥".repeat(Math.max(0, experiment.lives - state.livesLeft))}</span>
         </span>
@@ -125,7 +125,7 @@ export function MiniGameRenderer({
       {question && (
         <>
           <p className="font-medium">
-            <span className="me-2 text-xs text-gray-400">
+            <span className="me-2 text-xs text-gray-500">
               {index + 1} / {experiment.questions.length}
             </span>
             {question.prompt}

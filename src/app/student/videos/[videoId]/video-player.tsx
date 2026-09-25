@@ -217,7 +217,7 @@ export function VideoPlayer({
               }}
             />
           ) : (
-            <div className="flex aspect-video w-full items-center justify-center text-sm text-gray-400">
+            <div className="flex aspect-video w-full items-center justify-center text-sm text-gray-500">
               جاري تجهيز الفيديو...
             </div>
           )}
@@ -273,14 +273,14 @@ export function VideoPlayer({
                 </button>
                 <button
                   onClick={() => deleteBookmark(bookmark.id)}
-                  className="text-xs text-red-500 hover:underline"
+                  className="text-xs text-red-600 hover:underline"
                 >
                   حذف
                 </button>
               </li>
             ))}
             {bookmarks.length === 0 && (
-              <li className="text-xs text-gray-400">لا توجد لحظات محفوظة بعد.</li>
+              <li className="text-xs text-gray-500">لا توجد لحظات محفوظة بعد.</li>
             )}
           </ul>
         </div>
@@ -315,14 +315,14 @@ export function VideoPlayer({
                 </button>
                 <button
                   onClick={() => deleteNote(note.id)}
-                  className="shrink-0 text-xs text-red-500 hover:underline"
+                  className="shrink-0 text-xs text-red-600 hover:underline"
                 >
                   حذف
                 </button>
               </li>
             ))}
             {notes.length === 0 && (
-              <li className="text-xs text-gray-400">لا توجد ملاحظات بعد.</li>
+              <li className="text-xs text-gray-500">لا توجد ملاحظات بعد.</li>
             )}
           </ul>
         </div>

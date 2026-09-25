@@ -11,8 +11,8 @@ export default async function ParentLayout({ children }: { children: ReactNode }
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 print:hidden">
-        <div className="flex items-center gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 md:px-6 md:py-4 print:hidden">
+        <div className="flex flex-wrap items-center gap-4">
           <h1 className="text-sm font-medium">لوحة ولي الأمر</h1>
           <Link href="/parent/support" className="text-sm text-gray-500 hover:underline">
             الدعم الفني
@@ -32,7 +32,7 @@ export default async function ParentLayout({ children }: { children: ReactNode }
           </button>
         </form>
       </header>
-      <main className="flex-1 bg-gray-50 p-6">{children}</main>
+      <main className="min-w-0 flex-1 bg-gray-50 p-4 md:p-6">{children}</main>
     </div>
   );
 }

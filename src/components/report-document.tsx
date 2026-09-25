@@ -96,7 +96,7 @@ export function ReportDocument({
         </p>
       </section>
 
-      <footer className="border-t border-gray-200 pt-3 text-xs text-gray-400">
+      <footer className="border-t border-gray-200 pt-3 text-xs text-gray-500">
         تقرير لفترة محددة محفوظ كسجل دائم — رقم التقرير: <span dir="ltr">{report.id}</span>
       </footer>
     </article>

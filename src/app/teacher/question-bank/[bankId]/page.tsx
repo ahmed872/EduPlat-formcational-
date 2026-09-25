@@ -113,7 +113,7 @@ export default async function QuestionBankDetailPage({
               </p>
             </div>
             <form action={deleteQuestion.bind(null, bank.id, question.id)}>
-              <button type="submit" className="text-xs text-red-500 hover:underline">
+              <button type="submit" className="text-xs text-red-600 hover:underline">
                 حذف
               </button>
             </form>

@@ -91,7 +91,7 @@ export default async function CourseDetailPage({
                   />
                 </div>
               ) : (
-                <p className="text-xs text-amber-600">لا يوجد فيديو مرفوع لهذا الدرس بعد.</p>
+                <p className="text-xs text-amber-700">لا يوجد فيديو مرفوع لهذا الدرس بعد.</p>
               )}
               <form
                 action={uploadLessonVideo.bind(null, courseId, lesson.id)}
@@ -160,14 +160,14 @@ export default async function CourseDetailPage({
                           {chapter.title}
                         </span>
                         <form action={deleteVideoChapter.bind(null, courseId, chapter.id)}>
-                          <button type="submit" className="text-red-500 hover:underline">
+                          <button type="submit" className="text-red-600 hover:underline">
                             حذف
                           </button>
                         </form>
                       </li>
                     ))}
                     {lesson.video.chapters.length === 0 && (
-                      <li className="text-xs text-gray-400">لا توجد فصول بعد.</li>
+                      <li className="text-xs text-gray-500">لا توجد فصول بعد.</li>
                     )}
                   </ul>
                   <form
@@ -215,9 +215,9 @@ export default async function CourseDetailPage({
                         [{attachment.fileType}] {attachment.label ?? attachment.originalName}
                       </a>
                       <span className="flex items-center gap-3">
-                        <span className="text-gray-400">{Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB</span>
+                        <span className="text-gray-500">{Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB</span>
                         <form action={deleteLessonAttachment.bind(null, courseId, attachment.id)}>
-                          <button type="submit" className="text-red-500 hover:underline">
+                          <button type="submit" className="text-red-600 hover:underline">
                             حذف
                           </button>
                         </form>
@@ -225,7 +225,7 @@ export default async function CourseDetailPage({
                     </li>
                   ))}
                   {lesson.attachments.length === 0 && (
-                    <li className="text-xs text-gray-400">لا توجد مرفقات بعد.</li>
+                    <li className="text-xs text-gray-500">لا توجد مرفقات بعد.</li>
                   )}
                 </ul>
                 <AttachmentUpload courseId={courseId} lessonId={lesson.id} accept={ACCEPTED_ATTACHMENT_EXTENSIONS} />
@@ -245,26 +245,26 @@ export default async function CourseDetailPage({
                         [{EXPERIMENT_TYPE_LABELS[experiment.type] ?? experiment.type}]{" "}
                         {experiment.title}{" "}
                         {resolveExperiment(experiment)?.kind === "LEGACY_STEPS" && (
-                          <span className="text-gray-400">(صيغة قديمة: خطوات)</span>
+                          <span className="text-gray-500">(صيغة قديمة: خطوات)</span>
                         )}
                         {!resolveExperiment(experiment) && (
                           <span className="text-red-600">(إعدادات غير صالحة — احذفها وأعد إنشاءها)</span>
                         )}{" "}
                         {experiment.isRequired ? (
-                          <span className="text-amber-600">(إلزامية)</span>
+                          <span className="text-amber-700">(إلزامية)</span>
                         ) : (
-                          <span className="text-gray-400">(اختيارية)</span>
+                          <span className="text-gray-500">(اختيارية)</span>
                         )}
                       </span>
                       <form action={deleteExperiment.bind(null, courseId, experiment.id)}>
-                        <button type="submit" className="text-red-500 hover:underline">
+                        <button type="submit" className="text-red-600 hover:underline">
                           حذف
                         </button>
                       </form>
                     </li>
                   ))}
                   {lesson.experiments.length === 0 && (
-                    <li className="text-xs text-gray-400">لا توجد تجارب بعد.</li>
+                    <li className="text-xs text-gray-500">لا توجد تجارب بعد.</li>
                   )}
                 </ul>
                 <ExperimentEditor

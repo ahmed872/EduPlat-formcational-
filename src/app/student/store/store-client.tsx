@@ -74,7 +74,7 @@ export function StoreClient({ products }: { products: Product[] }) {
               <p className="mt-2 text-sm font-bold text-indigo-600">
                 {(product.priceCents / 100).toFixed(2)} جنيه
               </p>
-              <p className="text-xs text-gray-400">متبقي: {product.stock}</p>
+              <p className="text-xs text-gray-500">متبقي: {product.stock}</p>
               <div className="mt-2 flex items-center gap-2">
                 <button
                   type="button"

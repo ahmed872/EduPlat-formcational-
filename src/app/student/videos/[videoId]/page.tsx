@@ -128,7 +128,7 @@ export default async function WatchVideoPage({
               <li key={attachment.id} className="flex items-center justify-between text-sm">
                 <span>
                   {attachment.label ?? attachment.originalName}{" "}
-                  <span className="text-xs text-gray-400">
+                  <span className="text-xs text-gray-500">
                     ({attachment.fileType} · {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB)
                   </span>
                 </span>
@@ -186,7 +186,7 @@ export default async function WatchVideoPage({
                     <span>
                       {experiment.title}{" "}
                       {experiment.isRequired && (
-                        <span className="text-xs text-amber-600">(إلزامية)</span>
+                        <span className="text-xs text-amber-700">(إلزامية)</span>
                       )}
                     </span>
                     {completed ? (
@@ -238,7 +238,7 @@ export default async function WatchVideoPage({
                         الانتقال إليه
                       </Link>
                     ) : (
-                      <span className="text-xs text-gray-400">لا يوجد فيديو بعد</span>
+                      <span className="text-xs text-gray-500">لا يوجد فيديو بعد</span>
                     )}
                   </li>
                 ))}

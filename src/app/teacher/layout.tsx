@@ -50,17 +50,18 @@ export default async function TeacherLayout({
   }
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-64 shrink-0 border-l border-gray-200 bg-white p-4 print:hidden">
-        <p className="mb-6 text-sm text-gray-500">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      {/* Mobile: a top bar with a horizontally scrollable nav; desktop: sidebar. */}
+      <aside className="w-full shrink-0 border-b border-gray-200 bg-white p-3 md:w-64 md:border-b-0 md:border-l md:p-4 print:hidden">
+        <p className="mb-2 text-sm text-gray-600 md:mb-6">
           مرحبًا، {session?.user.name}
         </p>
-        <nav className="flex flex-col gap-1">
+        <nav aria-label="قائمة المعلم" className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="rounded-md px-3 py-2 text-sm hover:bg-indigo-50"
+              className="shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-sm hover:bg-indigo-50"
             >
               {item.label}
             </Link>
@@ -71,7 +72,7 @@ export default async function TeacherLayout({
             "use server";
             await signOut({ redirectTo: "/" });
           }}
-          className="mt-6"
+          className="mt-2 md:mt-6"
         >
           <button
             type="submit"
@@ -81,7 +82,7 @@ export default async function TeacherLayout({
           </button>
         </form>
       </aside>
-      <main className="flex-1 bg-gray-50 p-8">{children}</main>
+      <main className="min-w-0 flex-1 bg-gray-50 p-4 md:p-8">{children}</main>
     </div>
   );
 }

@@ -22,7 +22,7 @@ export default async function ShortsFeedPage() {
             href={`/shorts/${short.id}`}
             className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white"
           >
-            <div className="flex aspect-[9/16] items-center justify-center bg-gray-900 text-xs text-gray-400">
+            <div className="flex aspect-[9/16] items-center justify-center bg-gray-900 text-xs text-gray-300">
               {short.thumbnailUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img

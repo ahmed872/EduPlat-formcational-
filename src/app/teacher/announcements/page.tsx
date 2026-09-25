@@ -101,7 +101,7 @@ export default async function TeacherAnnouncementsPage() {
               </span>
             </div>
             <p className="mt-1 text-sm text-gray-600">{announcement.body}</p>
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-gray-500">
               {announcement.createdAt.toLocaleDateString("ar-EG")}
             </p>
           </div>

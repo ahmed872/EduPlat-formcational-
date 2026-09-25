@@ -117,7 +117,7 @@ export default async function ExamDetailPage({
                 {qq.question.prompt} <span className="text-xs text-gray-500">({qq.points} نقطة)</span>
               </span>
               <form action={removeQuestionFromExam.bind(null, quizId, qq.id)}>
-                <button type="submit" className="text-xs text-red-500 hover:underline">
+                <button type="submit" className="text-xs text-red-600 hover:underline">
                   إزالة
                 </button>
               </form>

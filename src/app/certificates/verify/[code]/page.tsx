@@ -32,7 +32,7 @@ export default async function VerifyCertificatePage({
             عن إتمام كورس: <strong>{result.courseTitle}</strong>
           </p>
           <p className="mt-3 text-xs text-gray-500">تاريخ الإصدار: {result.issuedAt.toLocaleDateString("ar-EG")}</p>
-          <p className="mt-1 text-xs text-gray-400">كود الشهادة: {result.code}</p>
+          <p className="mt-1 text-xs text-gray-500">كود الشهادة: {result.code}</p>
         </div>
       )}
       {result.status === "REVOKED" && (
@@ -45,7 +45,7 @@ export default async function VerifyCertificatePage({
           <p className="mt-3 text-xs text-gray-500">
             تاريخ الإلغاء: {result.revokedAt!.toLocaleDateString("ar-EG")}
           </p>
-          <p className="mt-1 text-xs text-gray-400">كود الشهادة: {result.code}</p>
+          <p className="mt-1 text-xs text-gray-500">كود الشهادة: {result.code}</p>
         </div>
       )}
       {(result.status === "NOT_FOUND" || result.status === "INVALID") && (

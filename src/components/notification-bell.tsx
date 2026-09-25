@@ -82,7 +82,7 @@ export function NotificationBell() {
               </li>
             ))}
             {notifications.length === 0 && (
-              <li className="px-3 py-4 text-center text-sm text-gray-400">لا توجد إشعارات.</li>
+              <li className="px-3 py-4 text-center text-sm text-gray-500">لا توجد إشعارات.</li>
             )}
           </ul>
         </div>

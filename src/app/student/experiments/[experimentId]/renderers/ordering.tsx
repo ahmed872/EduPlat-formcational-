@@ -45,7 +45,7 @@ export function OrderingRenderer({
             className="flex cursor-grab items-center justify-between gap-3 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
           >
             <span>
-              <span className="me-2 font-mono text-gray-400">{index + 1}.</span>
+              <span className="me-2 font-mono text-gray-500">{index + 1}.</span>
               {item.label}
             </span>
             <span className="flex gap-1">

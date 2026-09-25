@@ -175,7 +175,7 @@ export default async function TeacherCareerFieldsPage() {
                 ))}
               </div>
             ) : (
-              <p className="mt-2 text-xs text-amber-600">
+              <p className="mt-2 text-xs text-amber-700">
                 لا توجد سمات محددة — لن يظهر هذا المجال أبدًا في نتائج اختبار الاستكشاف.
               </p>
             )}

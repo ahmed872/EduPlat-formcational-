@@ -43,7 +43,7 @@ export default async function PlanDetailPage({
             >
               <span>{item.course?.title ?? "—"}</span>
               <form action={removePlanItem.bind(null, plan.id, item.id)}>
-                <button type="submit" className="text-xs text-red-500 hover:underline">
+                <button type="submit" className="text-xs text-red-600 hover:underline">
                   إزالة
                 </button>
               </form>

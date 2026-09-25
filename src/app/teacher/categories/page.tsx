@@ -31,14 +31,14 @@ function CategoryTreeItem({ node, depth }: { node: CategoryNode; depth: number }
   return (
     <div style={{ paddingInlineStart: depth * 20 }} className="border-b border-gray-100 py-2">
       <div className="flex items-center justify-between">
-        <span className={node.archived ? "text-gray-400 line-through" : ""}>
+        <span className={node.archived ? "text-gray-500 line-through" : ""}>
           {node.name}
         </span>
         {!node.archived && (
           <form action={archiveCategory.bind(null, node.id)}>
             <button
               type="submit"
-              className="text-xs text-red-500 hover:underline"
+              className="text-xs text-red-600 hover:underline"
             >
               أرشفة
             </button>

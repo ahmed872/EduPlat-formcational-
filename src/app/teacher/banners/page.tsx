@@ -103,7 +103,7 @@ export default async function TeacherBannersPage() {
                 </button>
               </form>
               <form action={deleteBanner.bind(null, banner.id)}>
-                <button type="submit" className="text-xs text-red-500 hover:underline">
+                <button type="submit" className="text-xs text-red-600 hover:underline">
                   حذف
                 </button>
               </form>

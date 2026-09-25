@@ -74,7 +74,7 @@ export function DragDropRenderer({
         className="flex min-h-14 flex-wrap gap-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3"
       >
         {unplaced.length === 0 ? (
-          <span className="text-xs text-gray-400">كل العناصر موزّعة</span>
+          <span className="text-xs text-gray-500">كل العناصر موزّعة</span>
         ) : (
           unplaced.map((item) => <Item key={item.id} {...item} />)
         )}

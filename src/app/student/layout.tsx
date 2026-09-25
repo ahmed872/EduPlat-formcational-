@@ -38,15 +38,18 @@ export default async function StudentLayout({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 print:hidden">
-        <nav className="flex gap-4">
+      {/* Mobile: account row on top, the long nav becomes one horizontally
+          scrollable row; desktop: side by side. The page itself never scrolls
+          sideways. */}
+      <header className="flex flex-col-reverse gap-3 border-b border-gray-200 bg-white px-4 py-3 md:flex-row md:items-center md:justify-between md:px-6 md:py-4 print:hidden">
+        <nav aria-label="القائمة الرئيسية" className="-mx-1 flex min-w-0 gap-4 overflow-x-auto px-1 pb-1 md:flex-wrap md:gap-x-4 md:gap-y-2 md:overflow-visible md:pb-0">
           {NAV_ITEMS.map((item) => (
-            <Link key={item.href} href={item.href} className="text-sm font-medium">
+            <Link key={item.href} href={item.href} className="shrink-0 whitespace-nowrap text-sm font-medium">
               {item.label}
             </Link>
           ))}
         </nav>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3 self-end md:self-auto">
           <NotificationBell />
           <span className="text-sm text-gray-500">{session.user.name}</span>
           <form
@@ -61,7 +64,7 @@ export default async function StudentLayout({
           </form>
         </div>
       </header>
-      <main className="flex-1 bg-gray-50 p-6">{children}</main>
+      <main className="min-w-0 flex-1 bg-gray-50 p-4 md:p-6">{children}</main>
     </div>
   );
 }

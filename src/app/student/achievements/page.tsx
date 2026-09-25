@@ -40,7 +40,7 @@ export default async function StudentAchievementsPage() {
               {achievement.description && (
                 <p className="text-xs text-gray-500">{achievement.description}</p>
               )}
-              <p className="text-[10px] text-gray-400">
+              <p className="text-[10px] text-gray-500">
                 {earnedAt!.toLocaleDateString("ar-EG")}
               </p>
             </div>
@@ -78,7 +78,7 @@ export default async function StudentAchievementsPage() {
                       }}
                     />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">
+                  <p className="mt-1 text-[11px] text-gray-500">
                     {METRIC_LABELS[
                       (achievement.criteriaJson as { metric: string }).metric
                     ] ?? ""}
@@ -87,7 +87,7 @@ export default async function StudentAchievementsPage() {
                 </>
               )}
               {!progress && (
-                <p className="mt-1 text-[11px] text-gray-400">إنجاز خاص — يُمنح من المعلم.</p>
+                <p className="mt-1 text-[11px] text-gray-500">إنجاز خاص — يُمنح من المعلم.</p>
               )}
             </div>
           ))}

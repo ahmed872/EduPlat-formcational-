@@ -60,6 +60,7 @@ export default async function StudentCertificatesPage() {
             <div
               className="h-28 w-28 shrink-0"
               data-testid="certificate-qr"
+              role="img"
               aria-label="رمز QR للتحقق من الشهادة"
               dangerouslySetInnerHTML={{ __html: certificate.qrSvg }}
             />

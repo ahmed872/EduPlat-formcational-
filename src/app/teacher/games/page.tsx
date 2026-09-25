@@ -116,7 +116,7 @@ export default async function TeacherGamesPage() {
                     </button>
                   </form>
                   <form action={deleteGame.bind(null, game.id)}>
-                    <button type="submit" className="text-xs text-red-500 hover:underline">
+                    <button type="submit" className="text-xs text-red-600 hover:underline">
                       حذف
                     </button>
                   </form>
@@ -135,14 +135,14 @@ export default async function TeacherGamesPage() {
                         {q.prompt} — [{q.choices[q.correctIndex]}]
                       </span>
                       <form action={removeQuestionFromGame.bind(null, game.id, i)}>
-                        <button type="submit" className="text-red-500 hover:underline">
+                        <button type="submit" className="text-red-600 hover:underline">
                           حذف
                         </button>
                       </form>
                     </li>
                   ))}
                   {config.questions.length === 0 && (
-                    <li className="text-xs text-gray-400">لا توجد أسئلة بعد.</li>
+                    <li className="text-xs text-gray-500">لا توجد أسئلة بعد.</li>
                   )}
                 </ul>
                 <form

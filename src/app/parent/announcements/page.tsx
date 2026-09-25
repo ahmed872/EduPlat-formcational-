@@ -17,7 +17,7 @@ export default async function ParentAnnouncementsPage() {
           <div key={announcement.id} className="rounded-lg border border-gray-200 bg-white p-4">
             <p className="font-semibold">{announcement.title}</p>
             <p className="mt-1 text-sm text-gray-600">{announcement.body}</p>
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-gray-500">
               {announcement.createdAt.toLocaleDateString("ar-EG")}
             </p>
           </div>
