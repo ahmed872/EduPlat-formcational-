@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { ForbiddenError } from "@/lib/rbac";
-import { isRateLimited, recordLoginAttempt } from "@/lib/business/security";
+import { markLoginAttemptSucceeded, reserveLoginAttempt } from "@/lib/business/security";
 import { hashPassword, passwordPolicyError, verifyPassword } from "@/lib/business/password";
 
 /**
@@ -229,14 +229,15 @@ export async function changePassword(
 ): Promise<ChangeResult> {
   const now = params.now ?? new Date();
   const user = await prisma.user.findUniqueOrThrow({ where: { id: params.userId } });
-  if (await isRateLimited(prisma, user.email, now)) {
+  const attemptId = await reserveLoginAttempt(prisma, user.email, now);
+  if (!attemptId) {
     return { ok: false, code: "RATE_LIMITED", message: "محاولات خاطئة كثيرة. انتظر قليلًا ثم أعد المحاولة." };
   }
   const currentOk = await verifyPassword(params.currentPassword, user.passwordHash);
   if (!currentOk) {
-    await recordLoginAttempt(prisma, { email: user.email, succeeded: false });
     return { ok: false, code: "WRONG_PASSWORD", message: "كلمة المرور الحالية غير صحيحة" };
   }
+  await markLoginAttemptSucceeded(prisma, attemptId);
   const policyError = passwordPolicyError(params.newPassword, { email: user.email });
   if (policyError) return { ok: false, code: "WEAK_PASSWORD", message: policyError };
   if (await verifyPassword(params.newPassword, user.passwordHash)) {

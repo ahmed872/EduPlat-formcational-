@@ -3,7 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { authConfig } from "@/auth.config";
-import { isRateLimited, recordLoginAttempt } from "@/lib/business/security";
+import { markLoginAttemptSucceeded, reserveLoginAttempt } from "@/lib/business/security";
 import { verifyPassword } from "@/lib/business/password";
 import { isSessionStillValid } from "@/lib/business/session-validity";
 
@@ -54,9 +54,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // Real brute-force throttling: too many recent failures for this
         // exact email blocks further attempts for the configured window,
         // regardless of whether this particular password is even correct.
-        if (await isRateLimited(prisma, normalizedEmail)) {
-          return null;
-        }
+        // The attempt is reserved (recorded as a failure) atomically before
+        // the password is checked, so parallel guesses can't exceed the limit.
+        const attemptId = await reserveLoginAttempt(prisma, normalizedEmail);
+        if (!attemptId) return null;
 
         const user = await prisma.user.findUnique({
           where: { email: normalizedEmail },
@@ -68,7 +69,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             ? await verifyPassword(password, user.passwordHash)
             : false;
 
-        await recordLoginAttempt(prisma, { email: normalizedEmail, succeeded: validPassword });
+        if (validPassword) await markLoginAttemptSucceeded(prisma, attemptId);
 
         if (!user || user.status === "BLOCKED" || !validPassword) return null;
 

@@ -42,6 +42,47 @@ export async function isRateLimited(
 }
 
 /**
+ * Check-and-record in one step, for anything that verifies a password.
+ * isRateLimited() followed later by recordLoginAttempt() lets a burst of
+ * parallel guesses all pass the check before any failure is recorded
+ * (25 parallel logins had all 24 wrong passwords evaluated, and the
+ * right one accepted, against a limit of 5). Here the attempt is
+ * recorded as a failure up front, under a per-email advisory lock, and
+ * only flipped to success once the password has verified — so at most
+ * `maxAttempts` guesses are ever evaluated per window. Returns the
+ * attempt id, or null when the email is locked out.
+ */
+export async function reserveLoginAttempt(
+  prisma: PrismaClient,
+  email: string,
+  now: Date = new Date(),
+): Promise<string | null> {
+  const normalized = email.toLowerCase();
+  const [maxAttempts, windowMinutes] = await Promise.all([
+    getPlatformSetting<number>(PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_MAX_ATTEMPTS),
+    getPlatformSetting<number>(PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_WINDOW_MINUTES),
+  ]);
+  const windowStart = new Date(now.getTime() - windowMinutes * 60_000);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`login:${normalized}`}))`;
+    // No upper time bound: a concurrent attempt that took the lock first may
+    // carry a slightly later timestamp and must still count.
+    const failed = await tx.loginAttempt.count({
+      where: { email: normalized, succeeded: false, createdAt: { gte: windowStart } },
+    });
+    if (failed >= maxAttempts) return null;
+    const attempt = await tx.loginAttempt.create({
+      data: { email: normalized, succeeded: false, createdAt: now },
+    });
+    return attempt.id;
+  });
+}
+
+export async function markLoginAttemptSucceeded(prisma: PrismaClient, attemptId: string) {
+  await prisma.loginAttempt.update({ where: { id: attemptId }, data: { succeeded: true } });
+}
+
+/**
  * The only path that sets User.status to BLOCKED — enforced already at
  * sign-in (auth.ts's authorize() rejects a BLOCKED user), this is simply
  * the first real way to ever set that status. Writes a genuine AuditLog

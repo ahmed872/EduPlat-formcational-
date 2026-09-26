@@ -8,7 +8,9 @@ import {
   blockUser,
   getAuditLog,
   isRateLimited,
+  markLoginAttemptSucceeded,
   recordLoginAttempt,
+  reserveLoginAttempt,
   unblockUser,
 } from "@/lib/business/security";
 import { ForbiddenError } from "@/lib/rbac";
@@ -139,5 +141,37 @@ describe("getAuditLog", () => {
 
     expect(entries[0].action).toBe("UNBLOCK_USER");
     expect(entries[1].action).toBe("BLOCK_USER");
+  });
+});
+
+describe("reserveLoginAttempt (atomic check-and-record)", () => {
+  it("regression: parallel guesses can't exceed the lockout limit", async () => {
+    await setPlatformSetting(PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_MAX_ATTEMPTS, 5);
+    // Before: isRateLimited() then (after bcrypt) recordLoginAttempt() let all
+    // 24 of 25 parallel wrong passwords be evaluated.
+    const reserved = await Promise.all(Array.from({ length: 25 }, () => reserveLoginAttempt(prisma, "race@test.local")));
+    expect(reserved.filter(Boolean)).toHaveLength(5);
+    expect(await isRateLimited(prisma, "race@test.local")).toBe(true);
+  });
+
+  it("a verified password turns the reservation into a success that doesn't count toward the lockout", async () => {
+    await setPlatformSetting(PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_MAX_ATTEMPTS, 2);
+    for (let i = 0; i < 5; i++) {
+      const id = await reserveLoginAttempt(prisma, "ok@test.local");
+      expect(id).not.toBeNull();
+      await markLoginAttemptSucceeded(prisma, id!);
+    }
+    expect(await isRateLimited(prisma, "ok@test.local")).toBe(false);
+    expect(await prisma.loginAttempt.count({ where: { email: "ok@test.local", succeeded: true } })).toBe(5);
+  });
+
+  it("is per email, case-insensitive, and the window slides", async () => {
+    await setPlatformSetting(PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_MAX_ATTEMPTS, 1);
+    await setPlatformSetting(PLATFORM_SETTING_KEYS.LOGIN_RATE_LIMIT_WINDOW_MINUTES, 15);
+    const t0 = new Date("2026-09-01T10:00:00Z");
+    expect(await reserveLoginAttempt(prisma, "Victim@Test.local", t0)).not.toBeNull();
+    expect(await reserveLoginAttempt(prisma, "victim@test.local", t0)).toBeNull();
+    expect(await reserveLoginAttempt(prisma, "other@test.local", t0)).not.toBeNull();
+    expect(await reserveLoginAttempt(prisma, "victim@test.local", new Date(t0.getTime() + 16 * 60_000))).not.toBeNull();
   });
 });
