@@ -12,7 +12,7 @@ import {
 } from "@/test/factories";
 import { createQuestion, createQuiz } from "@/test/factories-quiz";
 import { sessionCookieFor } from "@/test/session";
-import { confirmPayment, startSubscriptionCheckout } from "@/lib/business/subscription";
+import { confirmPayment, refundPayment, rejectPayment, startSubscriptionCheckout } from "@/lib/business/subscription";
 import { issueSignedPlaybackUrl } from "@/lib/business/playback";
 import { checkLessonAvailability } from "@/lib/business/content-visibility";
 import { startQuizAttempt, submitQuizAttempt } from "@/lib/business/quiz";
@@ -85,6 +85,65 @@ describe("checkout integrity", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await prisma.entitlement.count({ where: { studentId: student.id } })).toBe(1);
     expect(await prisma.auditLog.count({ where: { action: "CONFIRM_PAYMENT" } })).toBe(1);
+  });
+});
+
+describe("manual payment decisions are atomic", () => {
+  async function pendingPayment() {
+    const student = await createStudent();
+    const teacher = await createTeacher();
+    const { plan } = await paidPlan();
+    const { payment, subscription } = await startSubscriptionCheckout(prisma, { studentId: student.id, planId: plan.id });
+    return { student, teacher, payment, subscription };
+  }
+
+  it("regression: a confirm racing a reject ends in one consistent outcome, never FAILED-with-access", async () => {
+    for (let round = 0; round < 5; round++) {
+      await resetDatabase();
+      const { student, teacher, payment, subscription } = await pendingPayment();
+      const outcomes = await Promise.allSettled([
+        confirmPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id }),
+        rejectPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id, reason: "لم يصل المبلغ" }),
+      ]);
+      expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+
+      const finalPayment = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+      const finalSub = await prisma.subscription.findUniqueOrThrow({ where: { id: subscription.id } });
+      const activeEntitlements = await prisma.entitlement.count({ where: { studentId: student.id, revokedAt: null } });
+      if (finalPayment.status === "SUCCEEDED") {
+        expect(finalSub.status).toBe("ACTIVE");
+        expect(activeEntitlements).toBeGreaterThan(0);
+      } else {
+        expect(finalPayment.status).toBe("FAILED");
+        expect(finalSub.status).toBe("CANCELLED");
+        expect(activeEntitlements).toBe(0);
+      }
+      const decisions = await prisma.auditLog.count({ where: { entityId: payment.id } });
+      expect(decisions).toBe(1);
+    }
+  });
+
+  it("regression: two simultaneous refunds are recorded once", async () => {
+    const { teacher, payment } = await pendingPayment();
+    await confirmPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id });
+    const outcomes = await Promise.allSettled([
+      refundPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id, reason: "a" }),
+      refundPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id, reason: "b" }),
+    ]);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    expect(await prisma.auditLog.count({ where: { entityId: payment.id, action: "REFUND_PAYMENT" } })).toBe(1);
+  });
+
+  it("never grants access before a teacher confirms, and a rejected payment can't be confirmed later", async () => {
+    const { student, teacher, payment, subscription } = await pendingPayment();
+    expect(subscription.status).toBe("PENDING_PAYMENT");
+    expect(payment.status).toBe("PENDING");
+    expect(payment.provider).toBe("MANUAL_OFFLINE");
+    expect(await prisma.entitlement.count({ where: { studentId: student.id } })).toBe(0);
+
+    await rejectPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id, reason: "x" });
+    await expect(confirmPayment(prisma, { paymentId: payment.id, adminUserId: teacher.id })).rejects.toThrow();
+    expect(await prisma.entitlement.count({ where: { studentId: student.id } })).toBe(0);
   });
 });
 

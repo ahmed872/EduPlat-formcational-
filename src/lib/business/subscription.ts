@@ -256,10 +256,17 @@ export async function rejectPayment(
   }
 
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.payment.update({
-      where: { id: payment.id },
+    // Conditional, like confirmPayment's claim: a reject racing a confirm
+    // must not overwrite a payment that was just confirmed (and granted
+    // access) — exactly one of the two decisions may win.
+    const claimed = await tx.payment.updateMany({
+      where: { id: payment.id, status: "PENDING" },
       data: { status: "FAILED", failureReason: params.reason },
     });
+    if (claimed.count === 0) {
+      throw new Error("Cannot reject this payment: it was already decided");
+    }
+    const updated = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
     await tx.subscription.update({
       where: { id: payment.subscriptionId },
       data: { status: "CANCELLED", cancelledAt: new Date() },
@@ -289,10 +296,14 @@ export async function refundPayment(
   }
 
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.payment.update({
-      where: { id: payment.id },
+    const claimed = await tx.payment.updateMany({
+      where: { id: payment.id, status: "SUCCEEDED" },
       data: { status: "REFUNDED", failureReason: params.reason },
     });
+    if (claimed.count === 0) {
+      throw new Error("Cannot refund this payment: it was already refunded or changed");
+    }
+    const updated = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
     await tx.subscription.update({
       where: { id: payment.subscriptionId },
       data: { status: "CANCELLED", cancelledAt: new Date() },
