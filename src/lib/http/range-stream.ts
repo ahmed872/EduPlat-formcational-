@@ -36,14 +36,14 @@ export async function streamFileResponse(
     if (!match) {
       return new Response("Malformed Range header", { status: 416 });
     }
-    const start = match[1] ? parseInt(match[1], 10) : 0;
-    const end = match[2] ? parseInt(match[2], 10) : size - 1;
-    if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= size) {
+    const range = resolveRange(match[1], match[2], size);
+    if (!range) {
       return new Response("Range Not Satisfiable", {
         status: 416,
         headers: { "Content-Range": `bytes */${size}` },
       });
     }
+    const { start, end } = range;
 
     const nodeStream = counted(storage.readStream(storageKey, { start, end }), start, size, onDelivered);
     return new Response(Readable.toWeb(nodeStream) as ReadableStream, {
@@ -61,6 +61,26 @@ export async function streamFileResponse(
     status: 200,
     headers: { ...commonHeaders, "Content-Length": String(size) },
   });
+}
+
+/**
+ * RFC 9110 §14.1.2 byte ranges: "a-b" with b past the end is served up to
+ * the last byte (players ask for fixed-size chunks and the final one runs
+ * past the end); "a-" is the rest of the file; "-n" is the LAST n bytes.
+ * Only a start at or past the end (or an empty file) is unsatisfiable.
+ */
+export function resolveRange(first: string, last: string, size: number): { start: number; end: number } | null {
+  if (size <= 0) return null;
+  if (first === "") {
+    if (last === "") return null;
+    const suffix = parseInt(last, 10);
+    if (!(suffix > 0)) return null;
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = parseInt(first, 10);
+  const end = last === "" ? size - 1 : Math.min(parseInt(last, 10), size - 1);
+  if (Number.isNaN(start) || Number.isNaN(end) || start >= size || start > end) return null;
+  return { start, end };
 }
 
 function counted(
