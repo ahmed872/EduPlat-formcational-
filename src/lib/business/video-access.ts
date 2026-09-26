@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import {
   PUBLISHED_LESSON_WHERE,
+  canAccessLesson,
   effectiveContentState,
   liveEntitlementWhere,
 } from "@/lib/business/content-visibility";
@@ -34,7 +35,7 @@ export type VideoAccessDecision =
   | { allowed: true; reason: "FREE_VIDEO" | "ENTITLED"; viewsUsed: number; viewLimit: number | null }
   | {
       allowed: false;
-      reason: "VIDEO_NOT_FOUND" | "CONTENT_UNAVAILABLE" | "NOT_ENTITLED" | "VIEW_LIMIT_REACHED";
+      reason: "VIDEO_NOT_FOUND" | "CONTENT_UNAVAILABLE" | "NOT_ENTITLED" | "VIEW_LIMIT_REACHED" | "LESSON_LOCKED";
       viewsUsed: number;
       viewLimit: number | null;
     };
@@ -80,6 +81,21 @@ export async function checkVideoAccess(
       viewsUsed: 0,
       viewLimit: null,
     };
+  }
+
+  // Sequential unlocking applies to the video itself, not only to the page:
+  // every playback URL, range request, heartbeat, note and bookmark goes
+  // through here, so a locked lesson's video can't be reached by calling
+  // the APIs directly (it could before: only the page and the lesson's
+  // quiz/experiments/attachments checked the prerequisite).
+  if (video.lesson?.requiredPreviousLessonId) {
+    const sequence = await canAccessLesson(prisma, {
+      studentId: params.studentId,
+      lessonId: video.lesson.id,
+    });
+    if (!sequence.allowed) {
+      return { allowed: false, reason: "LESSON_LOCKED", viewsUsed: 0, viewLimit: null };
+    }
   }
 
   const viewsUsed = await prisma.watchSession.count({

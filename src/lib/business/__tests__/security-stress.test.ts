@@ -14,6 +14,8 @@ import { createQuestion, createQuiz } from "@/test/factories-quiz";
 import { sessionCookieFor } from "@/test/session";
 import { confirmPayment, refundPayment, rejectPayment, startSubscriptionCheckout } from "@/lib/business/subscription";
 import { issueSignedPlaybackUrl } from "@/lib/business/playback";
+import { checkVideoAccess } from "@/lib/business/video-access";
+import { assertHeartbeatTargetIsReal } from "@/lib/business/study-time";
 import { checkLessonAvailability } from "@/lib/business/content-visibility";
 import { startQuizAttempt, submitQuizAttempt } from "@/lib/business/quiz";
 import { getVideoStorageProvider } from "@/lib/storage/provider";
@@ -241,5 +243,41 @@ describe("exam deadline cannot be bypassed", () => {
     expect(await prisma.quizAnswer.count({ where: { attemptId: attempt.id } })).toBe(1);
     const final = await prisma.quizAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
     expect(final.status).toBe("GRADED");
+  });
+});
+
+describe("sequential unlock can't be bypassed through the video APIs", () => {
+  async function gatedPair() {
+    const course = await createCourse();
+    const lessonA = await createLesson({ courseId: course.id });
+    const lessonB = await createLesson({ courseId: course.id, requiredPreviousLessonId: lessonA.id });
+    const videoA = await createVideo({ lessonId: lessonA.id });
+    const videoB = await createVideo({ lessonId: lessonB.id });
+    const student = await createStudent();
+    await createEntitlement({ studentId: student.id, lessonId: lessonA.id });
+    await createEntitlement({ studentId: student.id, lessonId: lessonB.id });
+    return { student, lessonA, lessonB, videoA, videoB };
+  }
+
+  it("regression: an entitled student can't get lesson B's playback URL before completing lesson A", async () => {
+    const { student, lessonA, videoA, videoB } = await gatedPair();
+    expect("url" in (await issueSignedPlaybackUrl(prisma, { studentId: student.id, videoId: videoA.id }))).toBe(true);
+    const locked = await issueSignedPlaybackUrl(prisma, { studentId: student.id, videoId: videoB.id });
+    expect("url" in locked).toBe(false);
+
+    // Completing lesson A (with its quiz passed) unlocks lesson B.
+    await prisma.lessonProgress.create({
+      data: { studentId: student.id, lessonId: lessonA.id, status: "COMPLETED", quizPassed: true },
+    });
+    expect("url" in (await issueSignedPlaybackUrl(prisma, { studentId: student.id, videoId: videoB.id }))).toBe(true);
+  });
+
+  it("regression: a locked lesson's video earns no study time and accepts no notes", async () => {
+    const { student, videoB } = await gatedPair();
+    await expect(
+      assertHeartbeatTargetIsReal(prisma, { studentId: student.id, type: "VIDEO", refId: videoB.id }),
+    ).rejects.toThrow();
+    const decision = await checkVideoAccess(prisma, { studentId: student.id, videoId: videoB.id });
+    expect(decision).toMatchObject({ allowed: false, reason: "LESSON_LOCKED" });
   });
 });

@@ -51,7 +51,9 @@ export default async function WatchVideoPage({
       : { allowed: true as const };
 
   const decision = !videoDecision.allowed
-    ? videoDecision
+    ? videoDecision.reason === "LESSON_LOCKED"
+      ? ({ allowed: false, reason: "PREVIOUS_LESSON_NOT_COMPLETED" } as const)
+      : videoDecision
     : lessonAccess.allowed
       ? videoDecision
       : ({ allowed: false, reason: "PREVIOUS_LESSON_NOT_COMPLETED" } as const);
