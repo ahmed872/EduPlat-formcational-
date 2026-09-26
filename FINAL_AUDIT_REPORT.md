@@ -96,6 +96,109 @@ fixed, because it is outside the approved scope.
     (`next start`), passes 32/32. It includes direct API and
     server-action replay negatives, not just UI clicks.
 
+## Go-Live Blocker Closure (2026-09-26)
+
+**Scope.** This round closed the go-live blockers from the previous
+audit and found no new product features to add. It was verified against
+the code, not earlier summaries, and did **not** add a payment gateway,
+HLS/DRM/CDN, CAPTCHA, an email/SMS provider, monitoring or a scheduler.
+The subscription rules, archived-content access, `PromoCode.value`
+semantics and the recorded-only scope are unchanged.
+
+**Implemented:**
+- **Password recovery and change** (#50):
+  - hashed, single-use, short-lived tokens;
+  - the same answer whether or not an account exists;
+  - per-email rate limiting;
+  - all sessions end on reset or change;
+  - a development-only outbox;
+  - a teacher-issued link and an operator script as the working
+    production paths, because no email provider is integrated.
+- **Session invalidation that holds** (#56): every protected request is
+  re-checked, and sign-out is revoked server-side.
+- **Fail-closed production configuration** (#57): an https `AUTH_URL`
+  and `STORAGE_ROOT` are required. TLS through nginx was verified.
+- **Upload content validation and safe file replacement** (#58).
+- **Atomic payment decisions** (#59).
+- **RFC-compliant byte ranges** (#60).
+- **DEPLOYMENT.md rewritten:** topology, the tested proxy config, storage
+  setup, backup frequency/retention/verification, the smoke checklist,
+  and payment-gateway prerequisites.
+
+**Real defects found and fixed.** Each was reproduced first and has a
+regression test.
+
+| # | Finding | Severity | Found by | Fix / commit |
+|---|---|---|---|---|
+| G1 | **Blocked or invalidated sessions could still read protected pages.** `proxy.ts` accepted any correctly signed JWT, and ~35 pages rely on their layout for the auth check. A client-side navigation re-renders only the page segment, not the layout. Replaying a captured navigation request for `/student/hall-of-fame` after blocking the student returned **200 with the page**. After a password reset, a stolen teacher session could have read `/teacher/accounts`, `/teacher/payments`, … the same way. | HIGH | repro script | The proxy uses the full auth instance and re-checks the account on every protected request. The replay now gets 307 → `/login`. `0b4107c` |
+| G2 | **Sign-out did not sign out** (pre-existing). The auth middleware re-issues the session cookie on every response, and link prefetches in flight at sign-out came back after the cookie was deleted and re-created it: 8 such responses in one trace, and `/student` still returned 200. On a shared computer the next person kept the previous user's session. | HIGH | smoke S6 | Per-session id in the JWT, revoked server-side on sign-out (`RevokedSession`). Other devices stay signed in. `2602593` |
+| G3 | **Payment reject/refund were not atomic.** A reject racing a confirm both succeeded, leaving a FAILED payment and a CANCELLED subscription after access was granted; two refunds were both recorded. | MEDIUM | new race test (failed 2/2 before the fix) | Conditional claims like `confirmPayment`. `4bbb00f` |
+| G4 | **No password recovery at all** (previous blocker #50). | Blocker | audit | `ab12a7a` |
+| G5 | **Login followed any `?callbackUrl=`**, including `https://evil.example` (open redirect). | MEDIUM | code review | Same-origin paths only. `ab12a7a` |
+| G6 | **Byte ranges:** an end past the file got 416 instead of the remaining bytes (a player's final chunk), and `bytes=-500` returned the *first* 501 bytes. | MEDIUM | smoke S2 | RFC 9110 handling. `cbd9cc4` |
+| G7 | **Uploaded videos trusted the browser-declared type and the client's file extension.** No magic-byte check; the stored extension came from the filename. | LOW (teacher-only) | storage audit | Container detection; extension taken from the content. `1ffe95e` |
+| G8 | **Replacing a lesson video deleted the old file before updating the row**, so a failed update left a dangling key. Replacing also silently **re-published** a draft or archived video. A failed short insert left an orphaned file. | LOW | storage audit | Update first, delete after; status kept; cleanup on failure. `1ffe95e` |
+| G9 | **Production accepted unsafe configuration:** `AUTH_TRUST_HOST` without `AUTH_URL` made cookie security and redirects depend on proxy headers; `STORAGE_ROOT` could be unset or under `public/`. The storage probe also created directories under a rejected root. | MEDIUM | config audit | Fail closed. `f0185f8` |
+| G10 | **Documented nginx example broke shorts uploads over 30 MB**; the sign-in rate limit also covered `/api/auth/session`, and there was no HTTP→HTTPS redirect. | LOW (docs) | TLS test | DEPLOYMENT.md §5 replaced by the tested config. |
+| G11 | `rate-limit` race in the new reset-request limiter: 4 of 10 concurrent requests passed a limit of 3. | caught before commit | own test | Window query without an upper bound. `ab12a7a` |
+
+**Payment model verification** (kept as manual/offline, #59):
+- Students are told payment is manual, and no UI implies a gateway.
+- Transitions happen only in teacher-only server actions: `requireRole`
+  + proxy.
+- The amount comes from the plan on the server; the client never sends
+  it.
+- A student can't confirm a payment: the actions refuse and the proxy
+  redirects.
+- Access is granted only by `confirmPayment`. Subscription-backed
+  entitlements also require the subscription to be ACTIVE, so even a
+  late grant after a refund gives no access.
+- Every decision writes an AuditLog row.
+- Duplicate and concurrent checkouts are refused (5 parallel → 1), and
+  so is a checkout after the academic-year end.
+
+**Repository keyword review** (TODO, FIXME, HACK, temporary,
+placeholder, mock, fake, dummy, test password, default password,
+console.log, secret, token, password, unsafe, bypass):
+
+| Hits | Classification |
+|---|---|
+| TODO / FIXME / HACK / temporary / dummy / default password: 0 | — |
+| `placeholder` (52): HTML input placeholders; `Video.storageProvider @default("PLACEHOLDER")` (the upload always sets `LOCAL_PRIVATE`) | intentional |
+| `mock` / `unsafe` / `fake` in tests; `$executeRawUnsafe` only in the test DB reset | test-only |
+| `fake` (2) and `bypass` (5) in app code: comments explaining what is prevented | documentation |
+| `console.log` (6): startup "checks passed", seed output (prints the development password only outside production, never an env password), the operator reset-link script (prints to the operator's terminal by design) | intentional |
+| `secret` (16): `AUTH_SECRET` read for HMAC signing, and env validation (messages never include values) | intentional |
+| `token` / `password` (~360): auth, signed playback/download tokens, reset tokens, password policy; no token, password or email is logged anywhere (grep of every `console.*` call) | intentional |
+| `.env.example` placeholder secret | documentation (production startup refuses it) |
+
+Also checked:
+- **XSS:** 2 `dangerouslySetInnerHTML`, both locally generated QR SVGs.
+- **SQL injection:** no unsafe raw SQL in app code.
+- **SSRF:** no server-side outbound `fetch`.
+- **Stored external URLs:** career resources and social links are
+  validated (existing tests).
+
+**Accepted residual risks:**
+- **Registration reveals whether an email is registered** (409). This is
+  inherent to self-registration. It is mitigated by the proxy rate limit
+  on `/api/auth/register`, and the reset flow itself does not reveal it.
+- **Revoked sessions are checked against the database on every protected
+  request** (two indexed lookups) — by design.
+
+**Evidence (final build, 2026-09-26):**
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` / `npx eslint .` | clean / clean |
+| `npx vitest run` | **496/496** (46 files) |
+| `npm run build` | succeeds |
+| E2E MUST FIX / journey / stress / original / CSRF | 32/32, 12/12, 10/10, 26/26, 5/5 |
+| E2E password recovery (new) | **14/14** |
+| Production smoke (new) | **19/19** |
+| TLS reverse-proxy check (nginx, new) | **8/8** |
+| Production startup matrix | 4 unsafe configs → exit 1; complete config → healthy |
+
 ## Production Readiness & Deployment Audit (2026-09-25)
 
 **Method.** The MUST FIX claims were re-checked against the code,
@@ -191,9 +294,14 @@ build — not against earlier summaries):
   Postgres database. Where the E2E column says Yes, it was also exercised
   in a browser against `next start` in the final run.
 - **PARTIAL**: works for the primary path, with a named gap.
-- **BLOCKED**: needs an external provider or infrastructure the owner
-  must supply. The code stops at a documented seam and nothing is faked.
+- **BLOCKED**: a launch prerequisite that only the owner can supply
+  (infrastructure or a decision). Nothing in the code can close it.
+- **EXTERNAL DEPENDENCY**: needs a third-party provider that is not
+  integrated. The code stops at a documented seam and nothing is faked.
 - **NOT IMPLEMENTED**: does not exist.
+
+Re-baselined again on 2026-09-26 (go-live blocker round): rows 49–53
+were reclassified, row 50 was implemented, and rows 56–62 were added.
 
 | # | Requirement | Status | Evidence | Tests | E2E | Remaining |
 |---|---|---|---|---|---|---|
@@ -210,7 +318,7 @@ build — not against earlier summaries):
 | 11 | Private video storage, signed/expiring playback URL, per-request re-authorization, **session binding** | VERIFIED (session binding fixed in gap round — gap #2) | `src/app/api/stream/[videoId]/route.ts` (session must match token's studentId, unconditionally) | Yes (no-cookie / other-student / blocked → 403) | Yes | — |
 | 12 | **Three-view rule**, server-authoritative, cannot be bypassed via direct API | VERIFIED (**re-fixed 2026-09-25** — it was still client-trusted) | `src/app/api/stream/[videoId]/route.ts` + `recordDeliveredRange` / `consumeViewIfWithinLimit` in `src/lib/business/video-access.ts`: tokens are bound to a watch session; views are counted from bytes the server actually delivered; per-student+video advisory lock; the session holding the last view may finish | Yes (`view-accounting.test.ts`: fails on old code — 6 full streams with 0 views consumed; concurrent consumption fails 3/3 without the lock) | Yes (journey L4; stress X4: 10 parallel playbacks → exactly 3 views) | For very small files, browser prefetch can count a view at playback start (documented) |
 | 13 | Actual (not just opened-page) study-time tracking, heartbeat abuse resistance — VIDEO and EXERCISE | VERIFIED | `src/lib/business/study-time.ts` (`assertHeartbeatTargetIsReal`); `experiment-runner.tsx` sends only while visible + interacting | Yes | Yes (journey L2: exercise and video time credited in `DailyStudyStat` and carried into the parent report; MF2-h/i; stress X9 forged heartbeats refused) | — |
-| 14 | HLS/DASH/DRM/CDN/transcoding | BLOCKED (external infrastructure — not implemented in-app) | `StorageProvider` seam only; progressive MP4 via range requests today | — | — | Needs a video platform or object storage + CDN; see DEPLOYMENT.md §11. Nothing is claimed. |
+| 14 | HLS/DASH/DRM/CDN/transcoding | EXTERNAL DEPENDENCY (external infrastructure — not implemented in-app) | `StorageProvider` seam only; progressive MP4 via range requests today | — | — | Needs a video platform or object storage + CDN; see DEPLOYMENT.md §11. Nothing is claimed. |
 | 15 | Shorts (public, free, linked to source video+timestamp) | VERIFIED | `src/lib/business/shorts.ts` | Yes | — | — |
 | 16 | Sequential lesson gating (video → required experiments → quiz → next lesson), server-side | VERIFIED (fixed this audit — was CRITICAL, twice) | `src/lib/business/quiz.ts` (`startQuizAttempt` now calls `canAccessLesson`; `canAccessLesson` itself fixed again after E2E caught `isFree` bypassing the prerequisite gate entirely) | Yes | Yes | — |
 | 17 | Question bank: MCQ/True-False/multi-select/matching/short-answer/essay | VERIFIED | `prisma/schema.prisma` `QuestionType`, `src/lib/business/quiz.ts` | Yes | — | — |
@@ -245,13 +353,20 @@ build — not against earlier summaries):
 | 46 | Database integrity (constraints, indexes, cascade/restrict behavior, real FKs) | VERIFIED (FKs + RESTRICT + referral types added in MF round) | Migrations `20260925030000_user_relation_foreign_keys` (7 User FKs + Entitlement lesson/video RESTRICT) and `20260925040000_referral_reward_types`, each with an abort-before-DDL preflight | Yes (`schema-constraints.test.ts`) | Yes (DB refuses deleting an entitled lesson / a teacher with courses; constraints verified) | `PromoCode.value` intentionally unchanged (product decision) |
 | 47 | Course / lesson / video Publish · Unpublish · Archive, enforced everywhere | VERIFIED (MF round) | `src/lib/business/content-visibility.ts` (effective state over video→lesson→course), `content-status.ts`, teacher `StatusControls`; applied to dashboard, video page, search, stream, notes/bookmarks, heartbeat, quizzes, experiments, attachments, grants | Yes (16 visibility tests + route/quiz/experiment/attachment tests) | Yes (unpublish hides from holder incl. direct APIs; re-publish restores; archive keeps holders, blocks others/search/new grants; archived free lesson no longer free; video-only unpublish) | — |
 | 48 | Lesson attachments / PDF with protected download | VERIFIED (MF round) | `src/lib/business/attachments.ts` (magic-byte validation, signed 10-min token bound to student+attachment), `/api/attachments/[id]`, private `storage/attachments/` | Yes (25 tests incl. swapped id, video token reuse, revoked entitlement, unpublished course, traversal keys, header injection) | Yes (upload + spoofed/disallowed files rejected; download bytes checked; anonymous / other student / swapped id / forged token / raw path refused; unpublish revokes an issued link) | — |
-| 49 | Real online payment gateway | BLOCKED (external provider) | `PaymentProvider` seam in `src/lib/payments/provider.ts`; only `MANUAL_OFFLINE` and zero-amount `FREE` exist | — | — | Owner decides whether to launch with manual payments; see DEPLOYMENT.md §11 |
-| 50 | Password recovery / change (any role) | NOT IMPLEMENTED | none | — | — | Self-service reset needs email/SMS (#51); an admin-initiated reset is a product decision. **Launch decision required.** |
-| 51 | Email / SMS delivery | BLOCKED (external provider) | `notify()` writes in-app notifications only | Yes (in-app) | Yes (in-app) | Hook point: `notify()` |
-| 52 | Scheduled jobs (subscription status sync, automatic reports) | BLOCKED (no scheduler in repo) | Access checks evaluate expiry live; `syncExpiredSubscriptions` runs on page loads | Yes | — | Optional cron; not required for access correctness |
-| 53 | CAPTCHA on registration | NOT IMPLEMENTED (optional external enhancement) | — | — | — | Mitigated by proxy rate limits (DEPLOYMENT.md §5) |
+| 49 | Real online payment gateway | EXTERNAL DEPENDENCY (the manual/offline flow is VERIFIED; see #59) | `PaymentProvider` seam in `src/lib/payments/provider.ts`; only `MANUAL_OFFLINE` and zero-amount `FREE` exist | — | — | Owner decides whether to launch with manual payments; see DEPLOYMENT.md §11 |
+| 50 | Password recovery / change (any role) | VERIFIED (2026-09-26) | `src/lib/business/password-reset.ts` (SHA-256-hashed single-use tokens, 30 min self-service / 4 h teacher-issued, atomic claim, superseded by newer, blocked accounts refused, `sessionVersion` bump), `/forgot-password`, `/reset-password` (token in the URL fragment), `/account/password`, teacher-issued link in `/teacher/accounts`, `npm run password:reset-link` | Yes (`password-reset.test.ts`, forgot-password action tests, proxy tests) | Yes (`e2e_password` 14/14) | Self-service links are **not delivered** in production: email/SMS is an EXTERNAL DEPENDENCY (#51). Working production paths: the teacher-issued link, and the operator script for the teacher account. |
+| 51 | Email / SMS delivery | EXTERNAL DEPENDENCY | `notify()` writes in-app notifications only | Yes (in-app) | Yes (in-app) | Hook point: `notify()` |
+| 52 | Scheduled jobs (subscription status sync, automatic reports) | EXTERNAL DEPENDENCY (no scheduler in repo; not needed for access correctness) | Access checks evaluate expiry live; `syncExpiredSubscriptions` runs on page loads | Yes | — | Optional cron; not required for access correctness |
+| 53 | CAPTCHA on registration | EXTERNAL DEPENDENCY (optional; out of scope this round) | — | — | — | Mitigated by proxy rate limits (DEPLOYMENT.md §5) |
 | 54 | Deployment safety: env validation, startup checks, private storage persistence/permissions, migrations on fresh and populated DBs, backup/restore, failure recovery, health endpoint | VERIFIED (2026-09-25) | `src/instrumentation.ts`, `src/lib/startup.ts`, `src/lib/env.ts`, `STORAGE_ROOT`, `/api/health`, guarded migrations, production seed guard | Yes (`env.test.ts`, health route tests) | Yes (fresh-DB deploy + restart persistence; populated-DB upgrade; forced failure + `migrate resolve` recovery; dump/restore) | Backups must be scheduled by the owner |
 | 55 | Security headers, Arabic error/404 pages, mobile RTL layout, accessibility on critical journeys | VERIFIED (2026-09-25) | `next.config.ts` headers, `src/app/error.tsx` / `global-error.tsx` / `not-found.tsx`, responsive layouts | — | Yes (21 pages at 390 px: 0 px overflow, no serious/critical axe violations; error page shown on a refused action) | script-src CSP not restricted (needs nonces) |
+| 56 | Session invalidation: blocked accounts, password reset/change, sign-out, client-side navigation | VERIFIED (2026-09-26) | `src/proxy.ts` (live account check on every protected request), `session-validity.ts` (`sessionVersion`, `RevokedSession`), `src/lib/actions/sign-out.ts` | Yes (`proxy.test.ts`, `password-reset.test.ts`) | Yes (blocked session's replayed navigation → 307; after a reset both earlier devices signed out; pre-logout cookie replayed after sign-out → refused) | — |
+| 57 | Production configuration fails closed; HTTPS behind a TLS-terminating proxy | VERIFIED (2026-09-26) | `src/lib/env.ts` (https `AUTH_URL` and `STORAGE_ROOT` required, `STORAGE_ROOT` never in `public/`), `src/lib/startup.ts`, DEPLOYMENT.md §5 | Yes (`env.test.ts`) | Yes (4 bad configs exit 1; nginx TLS run: `__Secure-`/`__Host-` cookies, HSTS, spoofed Host ignored, 429 on sign-in bursts, 413 over the body limit) | The owner's real domain, certificate and proxy (#61) |
+| 58 | Upload validation and safe file replacement | VERIFIED (2026-09-26) | `src/lib/business/video-upload.ts` (container magic bytes; stored extension from content), video replace updates the row before deleting the old file, keeps the video's status | Yes (`video-upload.test.ts`) | Yes (all suites upload through the UI) | — |
+| 59 | Manual/offline payment workflow integrity | VERIFIED (2026-09-26) | Teacher-only confirm/reject/refund, each an atomic conditional transition with an AuditLog row; checkout guarded against duplicates and an ended academic year; UI states payment is manual | Yes (`security-stress.test.ts` incl. confirm-vs-reject and double-refund races) | Yes (journey S2/S3/R1; smoke X5: 5 parallel checkouts → 1 PENDING `MANUAL_OFFLINE` payment) | Online gateway is #49 |
+| 60 | HTTP byte-range compliance for video/short streaming | VERIFIED (2026-09-26) | `resolveRange` in `src/lib/http/range-stream.ts` | Yes (`range-stream.test.ts`) | Yes (smoke S2/G1) | — |
+| 61 | Production infrastructure: domain + TLS proxy, managed Postgres with scheduled backups and a test restore, persistent `STORAGE_ROOT` volume | BLOCKED (owner) | Procedures in DEPLOYMENT.md §3–§8, tested here with nginx + self-signed TLS and local Postgres | — | — | **Launch blocker** |
+| 62 | Monitoring / alerting | EXTERNAL DEPENDENCY | `/api/health`, JSON error lines | Yes | Yes | Recommended before launch |
 
 ## Critical Bugs Found
 
@@ -637,7 +752,8 @@ the dev database.
 1. The mini-game result was unmounted by `revalidatePath` inside
    `playMove`/`submitAttempt`. Fixed: the client refreshes when the
    student continues.
-2. A production server needs `AUTH_TRUST_HOST=true` (documented).
+2. A production server needs `AUTH_TRUST_HOST=true` (documented;
+   superseded 2026-09-26 by a required https `AUTH_URL`).
 3. Several test-side selector and assumption issues. For example, in RTL
    ArrowRight *decreases* a range input, and search pages echo the query
    text.
@@ -764,6 +880,32 @@ tests and, where it has UI, a browser E2E step:
       approved scope.
 
 ## Production Readiness Assessment
+
+**Update 2026-09-26 (go-live blocker closure):**
+- tsc and eslint clean; build succeeds.
+- Vitest 496/496 (46 files).
+- E2E on the final build: 32/32, 12/12, 10/10, 26/26, 5/5, password
+  14/14, smoke 19/19, TLS 8/8.
+- Coverage matrix (62 rows): **54 VERIFIED, 1 PARTIAL (#28), 1 BLOCKED
+  (#61, owner infrastructure), 6 EXTERNAL DEPENDENCY** (#14, #49, #51,
+  #52, #53, #62), 0 NOT IMPLEMENTED.
+
+**Verdict:** every code-side go-live blocker is closed and verified:
+password recovery, session invalidation, fail-closed configuration, TLS
+behaviour behind a proxy, storage safety, and payment integrity. **The
+platform is not yet production-ready**, because these remain and only
+the owner can close them (DEPLOYMENT.md §13):
+1. A domain, TLS certificate and reverse proxy (the config is tested).
+2. A production PostgreSQL with scheduled, off-host backups and **one
+   performed test restore**.
+3. A persistent `STORAGE_ROOT` volume included in the backups.
+4. Recorded decisions: launch with manual/offline payments; the
+   password-reset procedure without email (teacher-issued links +
+   operator script) or add an email provider.
+
+HLS/DRM/CDN, email/SMS, scheduled jobs, CAPTCHA and external monitoring
+are **not configured and not claimed to work**. None of them is required
+for a small single-instance launch; monitoring is recommended.
 
 **Update 2026-09-25 (production readiness & deployment audit):**
 - tsc and eslint are clean, and the production build succeeds.

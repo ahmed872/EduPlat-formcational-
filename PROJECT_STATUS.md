@@ -1,6 +1,6 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-25 (production readiness & deployment audit)
+Last updated: 2026-09-26 (go-live blocker closure)
 
 ## Current phase
 
@@ -1225,6 +1225,8 @@ against the pre-fix code.
 
 **Deployment note:** `next start` needs `AUTH_TRUST_HOST=true` (or
 `AUTH_URL`). It is documented in `.env.example` and SECURITY.md.
+*Superseded 2026-09-26: production now requires an https `AUTH_URL` and
+`STORAGE_ROOT` (DEPLOYMENT.md §2).*
 
 ### Production readiness & deployment audit (2026-09-25)
 
@@ -1267,9 +1269,59 @@ rollback, external integration options, go-live checklist).
 Video transcoding/HLS/CDN/DRM, email/SMS, scheduled jobs and CAPTCHA are
 external and optional for a small launch.
 
+### Go-live blocker closure (2026-09-26)
+
+**Implemented** (details, evidence and commits in FINAL_AUDIT_REPORT.md →
+"Go-Live Blocker Closure"):
+- **Password recovery and change**, available to every role:
+  - `/forgot-password` → `/reset-password`, plus `/account/password`;
+  - hashed, single-use, short-lived tokens;
+  - the same answer for existing and unknown emails;
+  - per-email rate limiting;
+  - every session ends after a reset or change.
+- **No email provider is integrated**, so in production the self-service
+  link is not sent and the page says so. Working paths:
+  - a teacher-issued one-time link in `/teacher/accounts` for students
+    and parents;
+  - `npm run password:reset-link` for the teacher account.
+- **Sessions that really end:** every protected request re-checks the
+  account (blocked / reset / changed), and sign-out revokes that session
+  server-side.
+- **Fail-closed production configuration:** an https `AUTH_URL` and a
+  `STORAGE_ROOT` outside `public/` are required. Verified behind nginx
+  TLS.
+- **Uploads:**
+  - videos are checked by content, and the extension comes from the
+    content;
+  - replacing a video no longer deletes the old file first, and no
+    longer publishes a draft.
+- **Payments:** reject and refund are atomic, like confirm. Manual/offline
+  payment was re-verified and kept.
+- **Streaming:** byte ranges follow RFC 9110.
+- **DEPLOYMENT.md** was rewritten: topology, the tested proxy config,
+  storage, backups (frequency, retention, verification), smoke checklist,
+  rollback, and payment-gateway prerequisites.
+
+**Real bugs found this round:**
+- invalidated sessions could still read pages via client navigation;
+- sign-out was silently undone by in-flight prefetches;
+- a payment reject racing a confirm both succeeded;
+- login `callbackUrl` open redirect;
+- range requests past the end got 416, and suffix ranges were wrong;
+- video replace deleted the old file first and re-published drafts;
+- unsafe production configurations were accepted;
+- the documented nginx config broke shorts uploads over 30 MB.
+
+**Launch blockers remaining (owner only):**
+- domain + TLS proxy;
+- production PostgreSQL with scheduled backups and one test restore;
+- a persistent `STORAGE_ROOT` volume;
+- recorded decisions on manual payments and the reset procedure.
+
 ## Not started (by priority order, all schema-ready)
 
-Real payment gateway integration, concurrent-session detection, HLS/DRM.
+Real payment gateway integration, HLS/DRM, email/SMS delivery (password
+reset links and notifications).
 
 ## Known gaps / honesty notes (per "no fake completion")
 
@@ -1448,7 +1500,7 @@ Real payment gateway integration, concurrent-session detection, HLS/DRM.
 ## Test status
 
 ```
-npx vitest run       # 446/446 passing (39 files)
+npx vitest run       # 496/496 passing (46 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1488,8 +1540,13 @@ ones → global search finds the new course → achievements page loads.
 Full narrative and the one real bug this pass caught are in
 `FINAL_AUDIT_REPORT.md`'s "E2E Findings" section.
 
-Browser E2E (Playwright, production build via `next start`, dev
-database), production-readiness round:
+Browser E2E on the final build of the go-live blocker round (2026-09-26):
+- MUST FIX 32/32, journey 12/12, stress 10/10, original 26/26, CSRF 5/5.
+- Password recovery (new) 14/14.
+- Production smoke (new) 19/19.
+- TLS reverse proxy (nginx, new) 8/8.
+
+Earlier (production-readiness round, 2026-09-25):
 - MUST FIX suite: 32/32.
 - Full role journey: 12/12.
 - HTTP security/concurrency stress: 10/10.
@@ -1506,16 +1563,23 @@ Earlier (MUST FIX round):
 
 ## Next recommended step
 
-All 21 phases, the full audit, and the approved gap-closure round are
-complete. No further work is queued. What remains open, and what each
-item needs before it can move:
-1. **Owner decisions:**
-   - password recovery (FINAL_AUDIT_REPORT #50);
-   - manual vs online payments (#49);
+All code-side go-live blockers are closed. What remains open, and what
+each item needs before it can move:
+1. **Owner infrastructure** (launch blockers, DEPLOYMENT.md §13):
+   - a domain + TLS proxy;
+   - production PostgreSQL with scheduled off-host backups and one test
+     restore;
+   - a persistent `STORAGE_ROOT` volume.
+2. **Owner decisions:**
+   - launch with manual/offline payments (#49);
+   - the password-reset procedure without email, or add a provider
+     (#51);
    - whether promo percentages may be fractional (`PromoCode.value`,
      intentionally unchanged).
-   Then complete the DEPLOYMENT.md §12 go-live checklist.
-2. **External infrastructure:** payment gateway, HLS/DRM/CDN, cron, and
-   CAPTCHA (PDF is handled in-app by the browser print flow).
-3. **Architectural change:** concurrent-session detection, which would
-   mean moving off JWT sessions.
+3. **External providers (optional for a small launch):** payment
+   gateway, HLS/DRM/CDN, email/SMS, cron, CAPTCHA, monitoring (PDF is
+   handled in-app by the browser print flow).
+4. **Product decision:** concurrent-session detection/limits. The
+   per-session id and database check added in this round (sign-out
+   revocation) are the foundation; limiting simultaneous sessions is
+   not implemented.

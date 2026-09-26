@@ -2,24 +2,87 @@
 
 ## Authentication & sessions
 
-- Passwords hashed with bcrypt (cost 12), never stored or logged in plain
-  text.
-- Self-hosted production (`next start`) must set `AUTH_TRUST_HOST=true`
-  (or `AUTH_URL`) so Auth.js accepts the deployment's host; without it,
-  every auth request fails with `UntrustedHost`. `next dev` trusts the
-  host automatically.
-- Sessions are JWT-based (NextAuth v5). `AUTH_SECRET` must be a strong random
-  value in production — `.env.example` ships a placeholder only.
-- Blocked users (`User.status = BLOCKED`) are rejected at the `authorize()`
-  step, before a session can ever be issued.
+- Passwords are hashed with bcrypt (cost 12) and never stored or logged
+  in plain text.
+- One policy applies to registration, reset and change
+  (`src/lib/business/password.ts`): at least 8 characters, at most 72
+  bytes (bcrypt's input limit, so nothing is silently truncated), not
+  only spaces, and not equal to the email.
+- **Production requires an https `AUTH_URL`** (the server refuses to
+  start otherwise). Auth.js then builds redirects from it, not from
+  `Host` / `X-Forwarded-*`, and issues `__Secure-` / `__Host-` cookies
+  (`Secure`, `HttpOnly`, `SameSite=Lax`). This was verified behind a
+  TLS-terminating nginx, including a spoofed `Host`.
+- Sessions are JWTs (NextAuth v5, 30-day maximum). `AUTH_SECRET` must be
+  a strong random value in production; `.env.example` ships a
+  placeholder only.
+- **Every session read re-checks the database**
+  (`src/lib/business/session-validity.ts`), including every request to
+  `/student`, `/teacher`, `/parent` and `/account` through `proxy.ts`. A
+  session is treated as signed out when:
+  - the account is blocked or deleted;
+  - `User.sessionVersion` has moved past the version in the token (every
+    password reset or change bumps it, ending all sessions);
+  - the session's own id (`sid`) was revoked by sign-out
+    (`RevokedSession`). This makes sign-out hold even when an in-flight
+    request re-issues the cookie afterwards.
+- Blocked users are also rejected at `authorize()`, before a session is
+  ever issued.
+- Login follows `?callbackUrl=` only to same-origin paths
+  (`src/lib/safe-redirect.ts`).
+
+## Password recovery
+
+- Tokens are 32 random bytes (base64url). Only their SHA-256 hash is
+  stored (`PasswordResetToken.tokenHash`).
+- They are single-use: the claim is a conditional update, so of several
+  simultaneous submissions exactly one wins.
+- Lifetime is 30 minutes for self-service and 4 hours for a
+  teacher-issued link. Issuing a new token deletes any unused one.
+- A token for an account blocked after issue is refused.
+- Malformed, unknown, expired, used, superseded and blocked-account
+  tokens all get the same answer.
+- The token is carried in the URL **fragment** (`#token=`), never sent in
+  the page request, and removed from the address bar on load. It can't
+  appear in proxy access logs or `Referer` headers.
+- `/forgot-password` answers identically for existing and unknown emails.
+  Only the rate-limit bookkeeping runs before the response; the account
+  lookup, token creation and delivery run after it (`next/server`
+  `after`).
+- Requests are limited to 3 per email per 15 minutes under an advisory
+  lock, counted on a hash of the email for every address.
+- A weak password doesn't consume the token.
+- A successful reset:
+  - bumps `sessionVersion`, ending every session including an attacker's;
+  - deletes other unused tokens;
+  - writes `PASSWORD_RESET` to the audit log.
+- A signed-in password change requires the current password. Wrong
+  guesses count toward the login lockout. It ends all sessions, including
+  the current one, and is audit-logged (`PASSWORD_CHANGE`).
+- **Delivery:** no email/SMS provider is integrated.
+  - In production nothing is sent, and the page says so.
+  - Outside production, links go to a local `.dev-outbox/` file; that
+    code refuses to run when `NODE_ENV=production`.
+  - Production recovery uses a teacher-issued link for students and
+    parents only. The teacher, not the student, is the actor; the link is
+    shown once and audit-logged as `ISSUE_PASSWORD_RESET_LINK`.
+  - The teacher account uses the operator script
+    `npm run password:reset-link` (shell + DB access required).
+- Tokens, passwords and emails are never logged.
 
 ## Authorization (defense in depth)
 
 Two independent layers, both fail-closed:
 
-1. `src/proxy.ts` (Next.js's edge middleware) redirects unauthenticated or
-   wrong-role requests away from `/teacher`, `/student`, `/parent` before
-   any page code runs.
+1. `src/proxy.ts` (Next.js 16 proxy on the Node.js runtime) redirects
+   unauthenticated, invalidated (see above) or wrong-role requests away
+   from `/teacher`, `/student`, `/parent` and `/account` before any page
+   code runs.
+   - This layer is required. A client-side navigation renders only the
+     page segment, not the layout, so a page that relies on its layout
+     for the auth check is reachable without it.
+   - Before 2026-09-26 the proxy trusted any signed JWT, and a blocked
+     student's replayed navigation returned the page.
 2. Every server component, Server Action, and Route Handler under those
    trees re-checks the role itself via `requireRole()`/manual session checks
    (`src/lib/rbac.ts`) — proxy/middleware is treated as a UX convenience,
@@ -200,7 +263,12 @@ set a payment to `SUCCEEDED` for a non-zero amount. The only synchronous
 "success" is a genuinely zero-amount checkout (free plan, or a `FREE_100`
 promo) — there being nothing to collect is not the same as faking that
 something was collected. Every confirm/reject/refund transition writes an
-`AuditLog` row (actor, action, entity, metadata). Wiring a real provider
+`AuditLog` row (actor, action, entity, metadata). Each transition is an
+atomic conditional update (`PENDING → SUCCEEDED | FAILED`,
+`SUCCEEDED → REFUNDED`). A reject racing a confirm, or two refunds, can't
+both succeed; this was a real race before 2026-09-26. Subscription-backed
+access also requires the subscription to be `ACTIVE`, so a refund cancels
+access even for a grant that lands late. Wiring a real provider
 means implementing `PaymentProvider.createIntent()` against its API (its
 webhook handler would call the same `confirmPayment()`/`rejectPayment()`
 functions, replacing the human click) — the checkout flow itself does not
@@ -297,7 +365,8 @@ change.
   and `src/lib/env.ts`):
   - checks `DATABASE_URL`, `AUTH_SECRET` (at least 32 characters, not the
     placeholder), `AUTH_TRUST_HOST` / `AUTH_URL`, URL formats and an
-    absolute `STORAGE_ROOT`;
+    absolute `STORAGE_ROOT` (tightened 2026-09-26: an https `AUTH_URL`
+    and `STORAGE_ROOT` are now required, see below);
   - probes that private storage is writable (bounded to 5 seconds);
   - in production any failure exits the process;
   - messages name variables, never values. Verified with the secret
@@ -341,6 +410,41 @@ change.
 - **Not implemented:** password reset / change for any role (needs an
   email/SMS provider or an owner decision; see the go-live checklist) and
   CAPTCHA.
+
+## Go-live hardening (2026-09-26)
+
+- **Configuration fails closed.** In production the server exits when:
+  - `AUTH_URL` is missing or not https (except localhost);
+  - `STORAGE_ROOT` is missing, relative or under `public/`;
+  - the secret is weak;
+  - storage is unwritable.
+
+  The storage probe never runs under a rejected root. Seed credentials
+  left in the runtime environment produce a warning.
+- **Uploads.**
+  - Videos and shorts must start with a real MP4/MOV `ftyp` box or a WebM
+    EBML header that matches the declared type.
+  - The stored extension comes from the detected container, never the
+    client filename.
+  - Replacing a video updates the row before deleting the old file, and
+    keeps the video's publication status.
+- **Streaming.** Byte ranges follow RFC 9110 (end clamped, suffix
+  ranges). Every range request re-checks the signed token (bound to
+  student + video + watch session), the entitlement and the publication
+  state.
+- **Verified end to end on the final build:**
+  - A copied signed URL gives 403 to another account; expired and
+    tampered URLs give 401.
+  - Direct storage paths return 404, and IDOR attempts are refused.
+  - A blocked user's live session ends.
+  - Pre-logout cookies are refused after sign-out.
+  - 5 parallel checkouts produce 1 subscription.
+- **Accepted residual risks:**
+  - Registration answers 409 for an existing email, which is inherent to
+    self-registration; mitigate with the proxy rate limit on
+    `/api/auth/register`.
+  - `script-src` is not restricted by CSP (it would need nonces).
+  - No CAPTCHA (optional external provider).
 
 ## Known dependency advisories
 
