@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
+import { signOutThisDevice } from "@/lib/actions/sign-out";
 
 const NAV_ITEMS = [
   { href: "/teacher", label: "لوحة التحكم" },
@@ -68,13 +69,7 @@ export default async function TeacherLayout({
             </Link>
           ))}
         </nav>
-        <form
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/" });
-          }}
-          className="mt-2 md:mt-6"
-        >
+        <form action={signOutThisDevice} className="mt-2 md:mt-6">
           <button
             type="submit"
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"

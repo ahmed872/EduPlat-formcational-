@@ -1338,6 +1338,20 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+// A signed-out session. The JWT alone can't be withdrawn from a browser that
+// still holds it (and in-flight requests re-issue the cookie after
+// sign-out), so sign-out records the session's id here and every session
+// read refuses it. Rows can be deleted once expiresAt (the JWT's own
+// maximum lifetime) has passed.
+model RevokedSession {
+  sid       String   @id
+  userId    String
+  revokedAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
 // One row per self-service reset request, for rate limiting. Keyed by a
 // hash of the normalized email so requests for addresses that have no
 // account are limited exactly like real ones (no enumeration via limits).

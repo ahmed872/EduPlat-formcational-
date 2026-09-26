@@ -18,7 +18,7 @@ import {
   type ResetDelivery,
 } from "@/lib/business/password-reset";
 import { PASSWORD_MAX_BYTES, hashPassword, passwordPolicyError } from "@/lib/business/password";
-import { isSessionStillValid } from "@/lib/business/session-validity";
+import { SESSION_MAX_AGE_SECONDS, isSessionStillValid, revokeSession } from "@/lib/business/session-validity";
 import { blockUser } from "@/lib/business/security";
 import { ForbiddenError } from "@/lib/rbac";
 
@@ -239,6 +239,22 @@ describe("sessions after a password reset or change", () => {
     await blockUser(prisma, { userId: user.id, reason: "test", blockedById: teacher.id });
     expect(await isSessionStillValid(prisma, { userId: user.id })).toBe(false);
     expect(await isSessionStillValid(prisma, { userId: "no-such-user" })).toBe(false);
+  });
+});
+
+describe("sign-out of one session", () => {
+  it("revokes exactly that session, idempotently, and prunes rows past the JWT lifetime", async () => {
+    const user = await userWithPassword();
+    const now = new Date("2026-09-01T10:00:00Z");
+    await revokeSession(prisma, { sid: "a", userId: user.id, now });
+    await revokeSession(prisma, { sid: "a", userId: user.id, now });
+    expect(await isSessionStillValid(prisma, { userId: user.id, sid: "a" })).toBe(false);
+    expect(await isSessionStillValid(prisma, { userId: user.id, sid: "b" })).toBe(true);
+    expect(await isSessionStillValid(prisma, { userId: user.id })).toBe(true);
+
+    const muchLater = new Date(now.getTime() + (SESSION_MAX_AGE_SECONDS + 60) * 1000);
+    await revokeSession(prisma, { sid: "c", userId: user.id, now: muchLater });
+    expect((await prisma.revokedSession.findMany()).map((r) => r.sid)).toEqual(["c"]);
   });
 });
 

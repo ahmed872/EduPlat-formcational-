@@ -19,7 +19,12 @@ export const authConfig: NextAuthConfig = {
         token.studentProfileId = user.studentProfileId;
         token.parentProfileId = user.parentProfileId;
         token.sessionVersion = user.sessionVersion;
+        token.sid = crypto.randomUUID();
       }
+      // Identifies this sign-in so sign-out can revoke exactly it (see
+      // session-validity.ts). Tokens issued before this existed get one on
+      // their next refresh.
+      if (!token.sid) token.sid = crypto.randomUUID();
       return token;
     },
     async session({ session, token }) {
@@ -27,6 +32,7 @@ export const authConfig: NextAuthConfig = {
       session.user.role = token.role;
       session.user.studentProfileId = token.studentProfileId;
       session.user.parentProfileId = token.parentProfileId;
+      session.sessionId = token.sid;
       return session;
     },
   },

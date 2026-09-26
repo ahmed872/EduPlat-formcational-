@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
+import { signOutThisDevice } from "@/lib/actions/sign-out";
 import { NotificationBell } from "@/components/notification-bell";
 
 const NAV_ITEMS = [
@@ -55,12 +56,7 @@ export default async function StudentLayout({
           <Link href="/account/password" className="text-sm text-gray-500 hover:underline">
             كلمة المرور
           </Link>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/" });
-            }}
-          >
+          <form action={signOutThisDevice}>
             <button type="submit" className="text-sm text-gray-500 hover:underline">
               تسجيل الخروج
             </button>

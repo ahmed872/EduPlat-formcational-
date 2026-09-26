@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
+import { signOutThisDevice } from "@/lib/actions/sign-out";
 
 export default async function ParentLayout({ children }: { children: ReactNode }) {
   const session = await auth();
@@ -24,12 +25,7 @@ export default async function ParentLayout({ children }: { children: ReactNode }
             تغيير كلمة المرور
           </Link>
         </div>
-        <form
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/" });
-          }}
-        >
+        <form action={signOutThisDevice}>
           <button type="submit" className="text-sm text-gray-500 hover:underline">
             تسجيل الخروج
           </button>

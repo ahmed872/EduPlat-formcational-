@@ -3,6 +3,8 @@ import type { DefaultSession } from "@auth/core/types";
 
 declare module "@auth/core/types" {
   interface Session {
+    /** This sign-in's id (JWT `sid`); sign-out revokes it server-side. */
+    sessionId?: string;
     user: {
       id: string;
       role: UserRole;
@@ -27,5 +29,6 @@ declare module "@auth/core/jwt" {
     parentProfileId: string | null;
     // Absent on tokens issued before password resets existed (= version 0).
     sessionVersion?: number;
+    sid?: string;
   }
 }

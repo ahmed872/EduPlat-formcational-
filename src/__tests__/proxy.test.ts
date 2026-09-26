@@ -5,6 +5,7 @@ import { resetDatabase } from "@/test/reset-db";
 import { createStudent, createTeacher } from "@/test/factories";
 import { sessionCookieFor } from "@/test/session";
 import proxy from "@/proxy";
+import { revokeSession } from "@/lib/business/session-validity";
 
 beforeEach(async () => {
   await resetDatabase();
@@ -43,6 +44,18 @@ describe("proxy: live session check on every protected request", () => {
 
     const fresh = await sessionCookieFor({ id: teacher.id, role: "TEACHER_ADMIN", sessionVersion: 1 });
     expect((await visit("/teacher/accounts", fresh)).status).toBe(200);
+  });
+
+  it("regression: a signed-out session stays signed out even if its cookie comes back", async () => {
+    // Requests in flight at sign-out (link prefetches) return with a refreshed
+    // session cookie; sign-out must hold server-side regardless.
+    const teacher = await createTeacher();
+    const signedOut = await sessionCookieFor({ id: teacher.id, role: "TEACHER_ADMIN", sid: "sid-signed-out" });
+    const otherDevice = await sessionCookieFor({ id: teacher.id, role: "TEACHER_ADMIN", sid: "sid-other-device" });
+    await revokeSession(prisma, { sid: "sid-signed-out", userId: teacher.id });
+
+    expect(new URL((await visit("/teacher/accounts", signedOut)).location!).pathname).toBe("/login");
+    expect((await visit("/teacher/accounts", otherDevice)).status).toBe(200);
   });
 
   it("redirects a blocked account to login", async () => {

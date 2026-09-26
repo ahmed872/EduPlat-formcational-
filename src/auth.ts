@@ -17,19 +17,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     ...authConfig.callbacks,
     // Re-verifies the account on every session read (every `auth()` call
-    // and every request through proxy.ts): a blocked account, or a token
-    // issued before the latest password reset/change (sessionVersion), is
-    // treated as signed out. The JWT signature alone can't express either.
+    // and every request through proxy.ts): a blocked account, a token
+    // issued before the latest password reset/change (sessionVersion), or a
+    // signed-out session (RevokedSession) is treated as signed out. The JWT signature alone can't express either.
     // Setting session.user to null makes every check that already treats
     // `!session?.user` as unauthenticated do the right thing.
     async session(params) {
       const session = await authConfig.callbacks!.session!(params);
       if (!session.user?.id) return session;
 
-      const token = (params as { token?: { sessionVersion?: number } }).token;
+      const token = (params as { token?: { sessionVersion?: number; sid?: string } }).token;
       const valid = await isSessionStillValid(prisma, {
         userId: session.user.id,
         sessionVersion: token?.sessionVersion,
+        sid: token?.sid,
       });
       if (!valid) {
         return { ...session, user: null as unknown as typeof session.user };
