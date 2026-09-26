@@ -1,19 +1,23 @@
-import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
-import { authConfig } from "@/auth.config";
+import { auth } from "@/auth";
 
-const { auth } = NextAuth(authConfig);
-
-const ROLE_PREFIXES: Record<string, string> = {
+// Proxy runs on the Node.js runtime (Next 16 default), so it uses the full
+// auth instance: its session callback re-checks the account in the database
+// (blocked, or signed out by a password reset/change). Protected pages
+// whose layout does that check are otherwise reachable by a client-side
+// navigation, which re-renders only the page segment, not the layout, and
+// many pages rely on the layout for their auth check.
+const ROLE_PREFIXES: Record<string, string | null> = {
   "/teacher": "TEACHER_ADMIN",
   "/parent": "PARENT",
   "/student": "STUDENT",
+  "/account": null, // any signed-in role
 };
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
-  const matchedPrefix = Object.keys(ROLE_PREFIXES).find((prefix) =>
-    pathname.startsWith(prefix),
+  const matchedPrefix = Object.keys(ROLE_PREFIXES).find(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
   if (!matchedPrefix) return NextResponse.next();
 
@@ -24,7 +28,8 @@ export default auth((req) => {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (session.user.role !== ROLE_PREFIXES[matchedPrefix]) {
+  const requiredRole = ROLE_PREFIXES[matchedPrefix];
+  if (requiredRole && session.user.role !== requiredRole) {
     return NextResponse.redirect(new URL("/", req.nextUrl.origin));
   }
 
@@ -32,5 +37,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/teacher/:path*", "/parent/:path*", "/student/:path*"],
+  matcher: ["/teacher/:path*", "/parent/:path*", "/student/:path*", "/account/:path*"],
 };

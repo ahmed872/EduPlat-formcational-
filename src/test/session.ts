@@ -12,6 +12,7 @@ export async function sessionCookieFor(user: {
   role: string;
   studentProfileId?: string | null;
   parentProfileId?: string | null;
+  sessionVersion?: number;
 }): Promise<string> {
   const token = await encode({
     secret: process.env.AUTH_SECRET!,
@@ -21,6 +22,7 @@ export async function sessionCookieFor(user: {
       role: user.role,
       studentProfileId: user.studentProfileId ?? null,
       parentProfileId: user.parentProfileId ?? null,
+      ...(user.sessionVersion === undefined ? {} : { sessionVersion: user.sessionVersion }),
       sub: user.id,
     },
   });

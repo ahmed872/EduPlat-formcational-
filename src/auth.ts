@@ -1,10 +1,11 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { authConfig } from "@/auth.config";
 import { isRateLimited, recordLoginAttempt } from "@/lib/business/security";
+import { verifyPassword } from "@/lib/business/password";
+import { isSessionStillValid } from "@/lib/business/session-validity";
 
 const credentialsSchema = z.object({
   email: z.string().email(),
@@ -15,26 +16,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   callbacks: {
     ...authConfig.callbacks,
-    // Re-verifies the account's live status on every session read (every
-    // `auth()` call from a server component/action/route — this instance,
-    // not the edge-safe one in auth.config.ts used by proxy.ts). Without
-    // this, blocking a user only ever affected NEW sign-ins: an already-
-    // issued JWT for a student blocked mid-session kept passing every
-    // requireRole()/requireSession() check until the token naturally
-    // expired, contradicting the account-management UI's own claim that a
-    // block "يمنعه فعليًا من تسجيل الدخول فورًا" (takes effect immediately).
-    // Setting session.user to null makes every existing check that already
-    // treats `!session?.user` as unauthenticated do the right thing with no
-    // other code path needing to change.
+    // Re-verifies the account on every session read (every `auth()` call
+    // and every request through proxy.ts): a blocked account, or a token
+    // issued before the latest password reset/change (sessionVersion), is
+    // treated as signed out. The JWT signature alone can't express either.
+    // Setting session.user to null makes every check that already treats
+    // `!session?.user` as unauthenticated do the right thing.
     async session(params) {
       const session = await authConfig.callbacks!.session!(params);
       if (!session.user?.id) return session;
 
-      const user = await prisma.user.findUnique({
-        where: { id: session.user.id },
-        select: { status: true },
+      const token = (params as { token?: { sessionVersion?: number } }).token;
+      const valid = await isSessionStillValid(prisma, {
+        userId: session.user.id,
+        sessionVersion: token?.sessionVersion,
       });
-      if (!user || user.status === "BLOCKED") {
+      if (!valid) {
         return { ...session, user: null as unknown as typeof session.user };
       }
       return session;
@@ -67,7 +64,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const validPassword =
           user && user.status !== "BLOCKED"
-            ? await bcrypt.compare(password, user.passwordHash)
+            ? await verifyPassword(password, user.passwordHash)
             : false;
 
         await recordLoginAttempt(prisma, { email: normalizedEmail, succeeded: validPassword });
@@ -81,6 +78,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           role: user.role,
           studentProfileId: user.studentProfile?.id ?? null,
           parentProfileId: user.parentProfile?.id ?? null,
+          sessionVersion: user.sessionVersion,
         };
       },
     }),

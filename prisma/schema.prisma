@@ -23,21 +23,30 @@ enum UserStatus {
 }
 
 model User {
-  id            String     @id @default(cuid())
-  email         String     @unique
-  phone         String?
-  passwordHash  String
-  name          String
-  avatarUrl     String?
-  locale        String     @default("ar")
-  role          UserRole
-  status        UserStatus @default(ACTIVE)
-  blockedReason String?
-  blockedAt     DateTime?
-  blockedById   String?
-  blockedBy     User?      @relation("UserBlockedBy", fields: [blockedById], references: [id], onDelete: Restrict)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id                String     @id @default(cuid())
+  email             String     @unique
+  phone             String?
+  passwordHash      String
+  name              String
+  avatarUrl         String?
+  locale            String     @default("ar")
+  role              UserRole
+  status            UserStatus @default(ACTIVE)
+  blockedReason     String?
+  blockedAt         DateTime?
+  blockedById       String?
+  blockedBy         User?      @relation("UserBlockedBy", fields: [blockedById], references: [id], onDelete: Restrict)
+  // Bumped on every password reset/change. Session JWTs carry the value
+  // they were issued with; a mismatch makes the server treat the session
+  // as signed out (see session-validity.ts), so a reset really ends every
+  // existing session, including one an attacker may hold.
+  sessionVersion    Int        @default(0)
+  passwordChangedAt DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  passwordResetTokens       PasswordResetToken[] @relation("PasswordResetTokenUser")
+  passwordResetTokensIssued PasswordResetToken[] @relation("PasswordResetTokenIssuer")
 
   studentProfile StudentProfile?
   parentProfile  ParentProfile?
@@ -1311,6 +1320,35 @@ model AuditLog {
  * force) so this intentionally has no relation, just the email as
  * typed.
  */
+// Single-use password reset token. Only a SHA-256 hash of the random token
+// is stored; the raw value exists only in the link given to the user.
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation("PasswordResetTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  // Set when a teacher/admin issued the link for out-of-band delivery;
+  // null for a self-service "forgot password" request.
+  issuedById String?
+  issuedBy   User?     @relation("PasswordResetTokenIssuer", fields: [issuedById], references: [id], onDelete: Restrict)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// One row per self-service reset request, for rate limiting. Keyed by a
+// hash of the normalized email so requests for addresses that have no
+// account are limited exactly like real ones (no enumeration via limits).
+model PasswordResetRequest {
+  id        String   @id @default(cuid())
+  emailHash String
+  createdAt DateTime @default(now())
+
+  @@index([emailHash, createdAt])
+}
+
 model LoginAttempt {
   id        String   @id @default(cuid())
   email     String

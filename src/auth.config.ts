@@ -18,6 +18,7 @@ export const authConfig: NextAuthConfig = {
         token.role = user.role;
         token.studentProfileId = user.studentProfileId;
         token.parentProfileId = user.parentProfileId;
+        token.sessionVersion = user.sessionVersion;
       }
       return token;
     },

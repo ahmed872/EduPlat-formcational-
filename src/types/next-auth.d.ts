@@ -15,6 +15,7 @@ declare module "@auth/core/types" {
     role: UserRole;
     studentProfileId: string | null;
     parentProfileId: string | null;
+    sessionVersion?: number;
   }
 }
 
@@ -24,5 +25,7 @@ declare module "@auth/core/jwt" {
     role: UserRole;
     studentProfileId: string | null;
     parentProfileId: string | null;
+    // Absent on tokens issued before password resets existed (= version 0).
+    sessionVersion?: number;
   }
 }
