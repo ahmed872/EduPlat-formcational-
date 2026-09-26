@@ -446,6 +446,42 @@ change.
   - `script-src` is not restricted by CSP (it would need nonces).
   - No CAPTCHA (optional external provider).
 
+## Release-candidate gate (2026-09-26)
+
+Found by deliberate attack and fixed, each with a regression test that
+fails on the previous code:
+- **Login lockout under parallel guesses.** Attempts are now reserved
+  atomically, recorded as a failure before bcrypt runs and flipped to
+  success afterwards, under a per-email advisory lock. At most 5 guesses
+  are evaluated per window, however many arrive at once; live, 25
+  parallel logins → 5 evaluated. The signed-in password change uses the
+  same reservation.
+- **Study time.** One wall clock per student: parallel heartbeats for
+  several videos or exercises can no longer multiply real time (live:
+  15.2 s real → 15 s credited across 3 videos).
+- **Sequential unlocking** is enforced by `checkVideoAccess`
+  (`LESSON_LOCKED`). The playback URL, stream, heartbeats, notes and
+  bookmarks of a locked lesson are refused, not just its page.
+- **Teacher `photoUrl`** must be http(s).
+- **Dead code:** the unused `POST /api/watch-sessions` was removed.
+
+Verified with no finding (live against the production build):
+- IDOR on every ID-taking API: notes, bookmarks, watch sessions, exam
+  submit, notifications, and attachment/video tokens swapped between
+  students.
+- A replayed server action retargeted at another student's support
+  ticket.
+- After logout with the old cookie replayed: pages, RSC navigation,
+  three APIs and a server action.
+- Answer keys: quiz `correctAnswer` and game `correctIndex` never reach
+  the browser; experiments send a public projection only.
+- A secret/hash/token/storage-path scan of 10 pages (HTML + RSC).
+- Draft lesson titles absent from all 8 student pages, for an entitled
+  student with notes and history.
+- The single-owner model: `TEACHER_ADMIN` is the platform owner's
+  combined role. Self-registration can only create STUDENT/PARENT, so
+  there is no second teacher to isolate from.
+
 ## Known dependency advisories
 
 `npm audit` currently reports a high-severity advisory in `deepmerge-ts`, a

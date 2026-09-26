@@ -128,6 +128,34 @@ A healthy start logs `[startup] configuration and private storage checks
 passed`, plus one expected warning that no email/SMS provider is
 integrated (§6a).
 
+`npm run build` needs no database and no `.env`; every data page is
+rendered per request.
+
+**Reproduced end to end (release-candidate gate, 2026-09-26)** in a
+fresh `git clone` with no `.env`, its own empty database and its own
+storage directory:
+1. `npm ci` (478 packages).
+2. 21 migrations in 1.6 s, "up to date".
+3. Build in 28 s.
+4. The production seed refused without credentials (0 users). With
+   explicit credentials it created exactly 1 `TEACHER_ADMIN` and no demo
+   or development accounts, and the password never appeared in output.
+5. 8 unsafe configurations each exited 1 with the right message:
+   - `AUTH_SECRET` missing or weak;
+   - `AUTH_URL` invalid or plain http;
+   - `DATABASE_URL` missing;
+   - `STORAGE_ROOT` missing, under `public/`, or unwritable.
+6. A healthy start; then the full teacher → student → parent journey
+   passed 12/12: manual payment, playback, PDF, experiment, quiz,
+   certificate, parent report and refund.
+7. Files were stored with mode 600 in directories with mode 700, and no
+   secret appeared in the log.
+8. `pg_dump` + storage tar → restore into a new database and a new
+   directory → row counts and file checksums identical.
+9. Restart on the restored copy; the seeded teacher logs in, the
+   attachment download is byte-identical, and a guest is still refused
+   (401).
+
 **After the first login:**
 - Set the academic-year end under platform settings. Checkout refuses to
   sell a subscription once the configured end has passed; the seed

@@ -1,6 +1,6 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-26 (go-live blocker closure)
+Last updated: 2026-09-26 (release-candidate gate)
 
 ## Current phase
 
@@ -1269,6 +1269,42 @@ rollback, external integration options, go-live checklist).
 Video transcoding/HLS/CDN/DRM, email/SMS, scheduled jobs and CAPTCHA are
 external and optional for a small launch.
 
+### Release-candidate gate (2026-09-26)
+
+An independent pass against the code, not earlier reports. It covered:
+- an inventory of all 89 server actions and 17 API routes;
+- live IDOR, after-logout and concurrency attacks;
+- the learning-flow and lifecycle leak checks;
+- a responsive audit at 390/768/1280 px;
+- a full deployment reproduced from a fresh clone.
+
+**Real defects found and fixed** (each with a regression test that fails
+on the previous code):
+1. **Login lockout.** Parallel guesses bypassed it: 24 of 25 were
+   evaluated, and the correct password was accepted.
+2. **Study time.** Parallel activities multiplied real time: 60 s was
+   credited as 240 s.
+3. **Sequential unlocking** was not enforced by the video APIs: a locked
+   lesson's playback URL, stream, heartbeats and notes were all allowed.
+4. **Teacher `photoUrl`** accepted javascript:/data: values.
+5. **`npm ci` failed** on a clean checkout (ERESOLVE, `@types/node`).
+6. **`npm run build` needed a production database**, because `/shorts`
+   was prerendered.
+7. **Dead code:** an unused `POST /api/watch-sessions`.
+8. **Stale docs:** the README was the create-next-app boilerplate,
+   recommending Vercel (unsafe with local private storage), and
+   ARCHITECTURE described the proxy as edge middleware.
+
+**Verified with no finding:**
+- ownership checks on every ID-taking action/API;
+- server actions and APIs after logout;
+- answer-key and secret leakage;
+- draft titles hidden from students;
+- payment transitions;
+- file-upload paths (only 3, all teacher-only and magic-byte checked);
+- fail-closed startup (8 unsafe configurations);
+- backup → restore → restart with byte-identical files.
+
 ### Go-live blocker closure (2026-09-26)
 
 **Implemented** (details, evidence and commits in FINAL_AUDIT_REPORT.md →
@@ -1500,7 +1536,7 @@ reset links and notifications).
 ## Test status
 
 ```
-npx vitest run       # 496/496 passing (46 files)
+npx vitest run       # 504/504 passing (46 files)
 npx tsc --noEmit     # clean
 npx eslint .         # clean
 npm run build        # succeeds
@@ -1539,6 +1575,16 @@ login rate limiting rejects even a correct 6th password after 5 wrong
 ones → global search finds the new course → achievements page loads.
 Full narrative and the one real bug this pass caught are in
 `FINAL_AUDIT_REPORT.md`'s "E2E Findings" section.
+
+Release-candidate gate, final build (2026-09-26):
+- MUST FIX 32/32, journey 12/12, stress 10/10, original 26/26, CSRF 5/5.
+- Password 14/14, smoke 19/19, TLS 8/8.
+- Release-gate attacks 11/11; lifecycle leak check pass.
+- Responsive/a11y: 23 pages × 390/768/1280 px clean.
+- Clean-clone deployment reproduction: all steps pass, journey 12/12 on
+  the fresh install.
+
+Verdict: **READY AFTER OWNER INFRASTRUCTURE SETUP** (FINAL_AUDIT_REPORT.md).
 
 Browser E2E on the final build of the go-live blocker round (2026-09-26):
 - MUST FIX 32/32, journey 12/12, stress 10/10, original 26/26, CSRF 5/5.

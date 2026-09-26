@@ -96,6 +96,127 @@ fixed, because it is outside the approved scope.
     (`next start`), passes 32/32. It includes direct API and
     server-action replay negatives, not just UI clicks.
 
+## Release-Candidate Gate (2026-09-26)
+
+**Scope.** An independent verification of the release candidate against
+the code, not earlier reports. No features were added and no
+architecture changed.
+
+**Method:**
+- An inventory of every entry point: 89 exported server actions (each
+  checked for `auth()` + role in its own body, or in a helper it calls)
+  and 17 API routes.
+- Live attacks against the production build: IDOR, after-logout replay,
+  concurrency, leakage, lifecycle and learning flow.
+- A responsive/accessibility audit.
+- A full deployment reproduced from a fresh `git clone`.
+
+**Authorization matrix** (✔ allowed, ✘ refused; every ✘ was exercised
+live or by a test):
+
+| Surface | Guest | Student | Parent | Teacher / back office (`TEACHER_ADMIN`) |
+|---|---|---|---|---|
+| Public pages, shorts, teacher profile, certificate verify | ✔ | ✔ | ✔ | ✔ |
+| `/student/*` pages | ✘ → login | ✔ own data only | ✘ → home | ✘ → home |
+| Lesson video (URL, stream, heartbeat, notes) | ✘ 401 | ✔ only if entitled/free, published or archived-and-owned, prerequisite met, within the view limit; token bound to student + video + session | ✘ | n/a (teachers don't stream as students) |
+| Quiz / experiment / attachment | ✘ | same rules as the video (`assertStudentCanUseLesson`); attachment link signed per student | ✘ | ✔ attachment download |
+| Another student's notes, bookmarks, sessions, attempts, tickets, orders, notifications, certificate | ✘ | ✘ 403/404 | ✘ | ✔ where moderation needs it (tickets, orders, certificates) |
+| `/parent/*` and a child's analytics/reports | ✘ | ✘ | ✔ approved-linked children only | ✘ |
+| `/teacher/*` pages and all back-office actions (content status, uploads, payments confirm/reject/refund, grants, accounts, reset links) | ✘ | ✘ (action replay refused) | ✘ | ✔ audited where financial/moderation |
+| Checkout | ✘ | ✔ own; duplicates, concurrent requests and an ended academic year refused | ✘ | n/a |
+| Password change `/account/password` | ✘ | ✔ own (current password + lockout) | ✔ own | ✔ own |
+
+*Ownership model:* `TEACHER_ADMIN` is the platform owner's combined
+teacher/back-office role. Such accounts are created only by the seed or
+the operator; self-registration allows only STUDENT/PARENT. There is
+therefore no cross-teacher tenancy to enforce, and none is claimed.
+
+**New defects found — each reproduced first, fixed, and covered by a
+regression test that fails on the previous code:**
+
+| # | Severity | Where | Reproduction | Root cause | Fix |
+|---|---|---|---|---|---|
+| RC1 | HIGH | `src/auth.ts` `authorize()` | 25 parallel logins for one email against the production build: all 24 wrong passwords were evaluated, and the correct one (in the burst) signed in despite the 5-per-15-min lockout | Check (`isRateLimited`), then bcrypt, then record — not atomic | `reserveLoginAttempt()`: record-as-failure under a per-email advisory lock before bcrypt. Live re-check: 5 of 25 evaluated, correct one refused. `53d4c12` |
+| RC2 | MEDIUM | `src/lib/business/study-time.ts` `recordHeartbeat` | Heartbeats for 3 videos + 1 exercise every 10 s for 60 s → 240 s credited; 5 concurrent videos over 20 s → 100 s | A clock per (type, refId), not per student | One wall clock per student under an advisory lock. Live: 15.2 s → 15 s for 3 parallel videos. `fa36e9b` |
+| RC3 | MEDIUM | `checkVideoAccess` (`src/lib/business/video-access.ts`) | A student entitled to lesson B, without completing lesson A, was issued a playback URL and a study-time heartbeat target for B's video | The prerequisite was enforced only by the video page and by the lesson's quiz/experiments/attachments | Video access refuses `LESSON_LOCKED`; every video path shares it. `e4bac5c` |
+| RC4 | LOW | `updateTeacherProfile` | `photoUrl` of `javascript:…` / `data:…` stored and rendered as `<img src>` | No validation (social links had it) | http(s) only. `5dc7e4a` |
+| RC5 | Deployment blocker | `package.json` | `npm ci` in a fresh clone → ERESOLVE | `@types/node ^20` vs vitest 5's peer `^22 \|\| >=24`; the dev install had skipped the check | `@types/node ^22` (matches the Node 22 runtime). `3d8d1a8` |
+| RC6 | Deployment blocker | `src/app/shorts/page.tsx` | `npm run build` in a fresh clone without a DB → "Environment variable not found: DATABASE_URL" | The only statically prerendered DB page; it also baked build-time data | `await connection()` (per request). `817185b` |
+| RC7 | LOW (dead code) | `POST /api/watch-sessions` | No caller since server-side view accounting | Left over | Removed. `5f47b4e` |
+| RC8 | Docs | README, ARCHITECTURE | README was the create-next-app template recommending Vercel (unsafe with local private storage); ARCHITECTURE called the proxy edge middleware | Stale | Rewritten/corrected. `9b2ca0f` |
+
+**Verified with no new finding:**
+- **Authorization:** every server action authenticates; every
+  ID-taking student/parent mutation compares ownership in the business
+  layer. Live checks, each refused with the data intact: A's note or
+  bookmark deleted by B (403); A's watch session patched (403); A's exam
+  attempt submitted (403); A's notification marked read (unchanged, not
+  listed); A's signed attachment link and video URL used by B (403); a
+  video token reused on another video id (401); B's support-reply
+  server action retargeted at A's ticket (0 replies).
+- **Sessions:** after logout, with the old cookie put back, the page and
+  RSC navigation got 307 → login; `/api/notifications`,
+  `/api/playback-url` and `/api/study/heartbeat` got 401; a replayed
+  server action created 0 rows. Blocked accounts, password
+  reset/change, concurrent sessions, CSRF and open redirect were covered
+  by the earlier suites, re-run green.
+- **Video:** entitlement, publication, token binding/expiry/tampering,
+  copied URLs, concurrent streams and the view-limit race, raw storage
+  paths (404), and file replacement.
+- **Lifecycle:** with the lesson in DRAFT, 8 student pages (dashboard,
+  history, saved moments, analytics, search, video, certificates, exams)
+  showed neither its title nor a result link, for an entitled student
+  with notes and history. Archive keeps rows and audit history
+  (status-only change).
+- **Learning flow:**
+  - A lesson quiz requires availability, the prerequisite and the
+    required experiments.
+  - Submissions must cover exactly the assigned questions; duplicates
+    hit a unique constraint.
+  - The deadline is checked on the server.
+  - Answer keys (`correctAnswer`, `correctIndex`, experiment keys) never
+    reach the browser.
+- **Commerce:** all transitions are teacher-only, atomic and audited;
+  promo redemption, referral rewards and certificates are unique at the
+  DB level. Duplicate entitlement rows are harmless because revocation
+  is by source (`updateMany` per subscription) and subscription-backed
+  access also requires an ACTIVE subscription.
+- **Uploads:** only 3 upload paths (video, short, attachment), all
+  teacher-only, magic-byte checked, stored under random names outside
+  `public/`.
+- **Leakage:** 10 pages (HTML + RSC) contained no bcrypt hash,
+  `passwordHash`, `tokenHash`, `storageKey`, answer key, blocked reason,
+  storage path or env secret. The keyword scan found 0
+  TODO/FIXME/HACK/debugger; other hits are classified as in the
+  go-live round.
+- **Responsive/RTL/a11y:** 23 critical pages (guest, student, parent,
+  teacher) at 390, 768 and 1280 px: all HTTP 200, `dir=rtl lang=ar`,
+  0 px horizontal overflow, no serious/critical axe violations (69
+  renders).
+- **Deployment from a fresh clone:**
+  - `npm ci`, 21 migrations and the build;
+  - the seed refused without credentials and created exactly 1 admin
+    with them;
+  - 8 unsafe configurations each exited 1;
+  - journey 12/12 against the fresh install;
+  - backup → restore into a new DB and directory → identical counts and
+    checksums;
+  - restart on the restored copy: byte-identical download, guest 401.
+
+**Evidence (final build `9b2ca0f`):**
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` / `npx eslint .` | clean / clean |
+| `npx vitest run` | **504/504** (46 files) |
+| `npm run build` | succeeds (no database needed) |
+| E2E MUST FIX / journey / stress / original / CSRF | 32/32, 12/12, 10/10, 26/26, 5/5 |
+| E2E password recovery / production smoke | 14/14, 19/19 |
+| Release-gate attacks (new) / lifecycle leak check (new) | 11/11 / pass |
+| TLS reverse proxy (nginx) | 8/8 |
+| Clean-clone deployment reproduction (new) | all 13 steps pass; journey 12/12 on the fresh install |
+| Responsive/a11y (new widths) | 23 pages × 3 widths clean |
+
 ## Go-Live Blocker Closure (2026-09-26)
 
 **Scope.** This round closed the go-live blockers from the previous
@@ -308,7 +429,7 @@ were reclassified, row 50 was implemented, and rows 56–62 were added.
 | 1 | Registration / login / logout / bcrypt hashing | VERIFIED | `src/auth.ts`, `src/app/api/auth/register/route.ts` | Yes | Yes | — |
 | 2 | Role-based access control (STUDENT/PARENT/TEACHER_ADMIN), two-layer (edge `proxy.ts` + per-page/action) | VERIFIED | `src/lib/rbac.ts`, `src/proxy.ts`, verified across 25+ actions | Yes | Yes | — |
 | 3 | Blocked-user enforcement, including an *already-logged-in* session | VERIFIED (fixed this audit) | `src/auth.ts` session callback now re-checks live DB status on every session read | New test needed at E2E layer only (business logic covered) | Yes | — |
-| 4 | Login rate limiting / brute-force throttling | VERIFIED | `src/lib/business/security.ts` | Yes | Yes | — |
+| 4 | Login rate limiting / brute-force throttling | VERIFIED — **RC gate correction:** parallel guesses bypassed the lockout (24 of 25 evaluated, correct password accepted); fixed with an atomic reservation `53d4c12`, re-verified live (5 of 25) | `src/lib/business/security.ts` | Yes | Yes | — |
 | 5 | Audit log for sensitive actions (payments, blocking) | VERIFIED | `src/app/teacher/audit-log/page.tsx` | Yes | Yes | — |
 | 6 | Dynamic category/course/lesson hierarchy (no hardcoded stages) | VERIFIED | `Category` is self-referential in schema; teacher CRUD confirmed generic | Yes (Foundation-era) | — | — |
 | 7 | Subscription/payment state machine, no fake payment success (manual/offline payment workflow) | VERIFIED (manual/offline only; no gateway) | `src/lib/business/subscription.ts`, `src/lib/payments/provider.ts` (`MANUAL_OFFLINE`); checkout now refuses duplicate open subscriptions and dead-on-arrival (academic-year-ended) purchases; student UI labels the payment as manual and states that nothing is charged online | Yes (`security-stress.test.ts`: replay/parallel checkout, concurrent confirm) | Yes (journey S2/S3: pending → teacher confirms → ACTIVE + audit; stress X1–X3, X8) | Online gateway: see #49 |
@@ -317,10 +438,10 @@ were reclassified, row 50 was implemented, and rows 56–62 were added.
 | 10 | Admin one-off entitlement grant (bonus lesson after purchase window) | VERIFIED (was dead, now wired) | `src/lib/business/video-access.ts` (`grantAdminEntitlement`), new `src/app/teacher/entitlements/page.tsx` | Yes | Yes | — |
 | 11 | Private video storage, signed/expiring playback URL, per-request re-authorization, **session binding** | VERIFIED (session binding fixed in gap round — gap #2) | `src/app/api/stream/[videoId]/route.ts` (session must match token's studentId, unconditionally) | Yes (no-cookie / other-student / blocked → 403) | Yes | — |
 | 12 | **Three-view rule**, server-authoritative, cannot be bypassed via direct API | VERIFIED (**re-fixed 2026-09-25** — it was still client-trusted) | `src/app/api/stream/[videoId]/route.ts` + `recordDeliveredRange` / `consumeViewIfWithinLimit` in `src/lib/business/video-access.ts`: tokens are bound to a watch session; views are counted from bytes the server actually delivered; per-student+video advisory lock; the session holding the last view may finish | Yes (`view-accounting.test.ts`: fails on old code — 6 full streams with 0 views consumed; concurrent consumption fails 3/3 without the lock) | Yes (journey L4; stress X4: 10 parallel playbacks → exactly 3 views) | For very small files, browser prefetch can count a view at playback start (documented) |
-| 13 | Actual (not just opened-page) study-time tracking, heartbeat abuse resistance — VIDEO and EXERCISE | VERIFIED | `src/lib/business/study-time.ts` (`assertHeartbeatTargetIsReal`); `experiment-runner.tsx` sends only while visible + interacting | Yes | Yes (journey L2: exercise and video time credited in `DailyStudyStat` and carried into the parent report; MF2-h/i; stress X9 forged heartbeats refused) | — |
+| 13 | Actual (not just opened-page) study-time tracking, heartbeat abuse resistance — VIDEO and EXERCISE | VERIFIED — **RC gate correction:** parallel activities multiplied real time (60 s credited as 240 s); fixed with one wall clock per student `fa36e9b`, re-verified live (15.2 s → 15 s) | `src/lib/business/study-time.ts` (`assertHeartbeatTargetIsReal`); `experiment-runner.tsx` sends only while visible + interacting | Yes | Yes (journey L2: exercise and video time credited in `DailyStudyStat` and carried into the parent report; MF2-h/i; stress X9 forged heartbeats refused) | — |
 | 14 | HLS/DASH/DRM/CDN/transcoding | EXTERNAL DEPENDENCY (external infrastructure — not implemented in-app) | `StorageProvider` seam only; progressive MP4 via range requests today | — | — | Needs a video platform or object storage + CDN; see DEPLOYMENT.md §11. Nothing is claimed. |
 | 15 | Shorts (public, free, linked to source video+timestamp) | VERIFIED | `src/lib/business/shorts.ts` | Yes | — | — |
-| 16 | Sequential lesson gating (video → required experiments → quiz → next lesson), server-side | VERIFIED (fixed this audit — was CRITICAL, twice) | `src/lib/business/quiz.ts` (`startQuizAttempt` now calls `canAccessLesson`; `canAccessLesson` itself fixed again after E2E caught `isFree` bypassing the prerequisite gate entirely) | Yes | Yes | — |
+| 16 | Sequential lesson gating (video → required experiments → quiz → next lesson), server-side | VERIFIED — **RC gate correction:** the video APIs (playback URL, stream, heartbeat, notes) did not check the prerequisite; fixed in `checkVideoAccess` `e4bac5c` | `src/lib/business/quiz.ts` (`startQuizAttempt` now calls `canAccessLesson`; `canAccessLesson` itself fixed again after E2E caught `isFree` bypassing the prerequisite gate entirely) | Yes | Yes | — |
 | 17 | Question bank: MCQ/True-False/multi-select/matching/short-answer/essay | VERIFIED | `prisma/schema.prisma` `QuestionType`, `src/lib/business/quiz.ts` | Yes | — | — |
 | 18 | Random/fixed question selection, consistent across serve/validate/score | VERIFIED | `src/lib/business/quiz.ts` | Yes | — | — |
 | 19 | Exam time limit and availability window enforced **server-side** | VERIFIED (test coverage **added 2026-09-25** — the claim previously had none) | `src/lib/business/quiz.ts` (`submitQuizAttempt` grades a late submission as zero) | Yes (`security-stress.test.ts`: past time limit + grace → 0 points; inside → graded; concurrent double submit → one answer set) | — (API ownership check covered by route + stress X7) | — |
@@ -344,7 +465,7 @@ were reclassified, row 50 was implemented, and rows 56–62 were added.
 | 37 | Career guidance (honest suggestions, teacher-managed fields incl. roadmap/resources) | VERIFIED (gap round — gap #6) | `src/lib/business/career-guidance.ts` (`updateCareerField` keeps id+slug; roadmap/resources with http(s)-only URLs) | Yes | Yes | — |
 | 38 | Certificates (eligibility, no duplicate issuance, public verification, **QR**) | VERIFIED (MF round). **Correction:** this row previously read COMPLETE although no QR code existed — it should have been PARTIAL until this round | `src/lib/business/certificates.ts` (`verifyCertificate`, `certificateQrSvg` via local `qrcode` library, `revokeCertificate`/`restoreCertificate`), public `/certificates/verify/[code]`, printable `/student/certificates/[id]` | Yes (21 tests: malformed/tampered/internal-id codes, revoked/restored, reason never public, audit log) | Yes (QR decoded from rendered pixels → exact public URL; valid / not-found / invalid / revoked shown without login; other student 404) | — |
 | 39 | Referral (valid/invalid/self/duplicate, real-conversion-only reward) | VERIFIED ($0-checkout gate fixed this audit) | `src/lib/business/referral.ts` | Yes | Yes | No anti-fake-account friction exists (honestly pre-documented in code, not hidden) |
-| 40 | Teacher profile (bio/education/experience/social links/contact/locations+schedule) | VERIFIED (gap round — gap #7) | `src/lib/business/teacher-profile.ts`, `/teacher/profile`, public `/teachers/[teacherId]` | Yes (incl. javascript:/malformed rejection) | Yes | — |
+| 40 | Teacher profile (bio/education/experience/social links/contact/locations+schedule) | VERIFIED — **RC gate correction:** `photoUrl` accepted javascript:/data: values; now http(s) only `5dc7e4a` | `src/lib/business/teacher-profile.ts`, `/teacher/profile`, public `/teachers/[teacherId]` | Yes (incl. javascript:/malformed rejection) | Yes | — |
 | 41 | Support tickets (student/parent/teacher, ownership, statuses) | VERIFIED (authorization + notification gaps fixed this audit) | `src/lib/business/support.ts` | Yes | Yes | — |
 | 42 | Store (products/orders/states/authorization), no fake payment success | VERIFIED (stock race fixed this audit) | `src/lib/business/store.ts` | Yes, incl. concurrency test | Yes | — |
 | 43 | Notifications (lesson-unlock, subscription-activated, target-reached, achievement, support-reply) | VERIFIED (TARGET_REACHED race closed in gap round — gap #3) | `src/lib/business/notifications.ts` (real `@@unique([userId, dedupeKey])`) | Yes (stale-read race test) | Yes | — |
@@ -358,7 +479,7 @@ were reclassified, row 50 was implemented, and rows 56–62 were added.
 | 51 | Email / SMS delivery | EXTERNAL DEPENDENCY | `notify()` writes in-app notifications only | Yes (in-app) | Yes (in-app) | Hook point: `notify()` |
 | 52 | Scheduled jobs (subscription status sync, automatic reports) | EXTERNAL DEPENDENCY (no scheduler in repo; not needed for access correctness) | Access checks evaluate expiry live; `syncExpiredSubscriptions` runs on page loads | Yes | — | Optional cron; not required for access correctness |
 | 53 | CAPTCHA on registration | EXTERNAL DEPENDENCY (optional; out of scope this round) | — | — | — | Mitigated by proxy rate limits (DEPLOYMENT.md §5) |
-| 54 | Deployment safety: env validation, startup checks, private storage persistence/permissions, migrations on fresh and populated DBs, backup/restore, failure recovery, health endpoint | VERIFIED (2026-09-25) | `src/instrumentation.ts`, `src/lib/startup.ts`, `src/lib/env.ts`, `STORAGE_ROOT`, `/api/health`, guarded migrations, production seed guard | Yes (`env.test.ts`, health route tests) | Yes (fresh-DB deploy + restart persistence; populated-DB upgrade; forced failure + `migrate resolve` recovery; dump/restore) | Backups must be scheduled by the owner |
+| 54 | Deployment safety: env validation, startup checks, private storage persistence/permissions, migrations on fresh and populated DBs, backup/restore, failure recovery, health endpoint | VERIFIED — **RC gate correction:** a clean clone failed `npm ci` (ERESOLVE) and `npm run build` needed a database; fixed `3d8d1a8`, `817185b`, then reproduced end to end from a fresh clone | `src/instrumentation.ts`, `src/lib/startup.ts`, `src/lib/env.ts`, `STORAGE_ROOT`, `/api/health`, guarded migrations, production seed guard | Yes (`env.test.ts`, health route tests) | Yes (fresh-DB deploy + restart persistence; populated-DB upgrade; forced failure + `migrate resolve` recovery; dump/restore) | Backups must be scheduled by the owner |
 | 55 | Security headers, Arabic error/404 pages, mobile RTL layout, accessibility on critical journeys | VERIFIED (2026-09-25) | `next.config.ts` headers, `src/app/error.tsx` / `global-error.tsx` / `not-found.tsx`, responsive layouts | — | Yes (21 pages at 390 px: 0 px overflow, no serious/critical axe violations; error page shown on a refused action) | script-src CSP not restricted (needs nonces) |
 | 56 | Session invalidation: blocked accounts, password reset/change, sign-out, client-side navigation | VERIFIED (2026-09-26) | `src/proxy.ts` (live account check on every protected request), `session-validity.ts` (`sessionVersion`, `RevokedSession`), `src/lib/actions/sign-out.ts` | Yes (`proxy.test.ts`, `password-reset.test.ts`) | Yes (blocked session's replayed navigation → 307; after a reset both earlier devices signed out; pre-logout cookie replayed after sign-out → refused) | — |
 | 57 | Production configuration fails closed; HTTPS behind a TLS-terminating proxy | VERIFIED (2026-09-26) | `src/lib/env.ts` (https `AUTH_URL` and `STORAGE_ROOT` required, `STORAGE_ROOT` never in `public/`), `src/lib/startup.ts`, DEPLOYMENT.md §5 | Yes (`env.test.ts`) | Yes (4 bad configs exit 1; nginx TLS run: `__Secure-`/`__Host-` cookies, HSTS, spoofed Host ignored, 429 on sign-in bursts, 413 over the body limit) | The owner's real domain, certificate and proxy (#61) |
@@ -880,6 +1001,21 @@ tests and, where it has UI, a browser E2E step:
       approved scope.
 
 ## Production Readiness Assessment
+
+**Release-candidate gate verdict (2026-09-26): READY AFTER OWNER
+INFRASTRUCTURE SETUP.**
+- All application-side defects found in the gate (RC1–RC8) are fixed and
+  regression-tested, and no application-side blocker remains.
+- Deployment was reproduced from a fresh clone.
+- What remains is outside the repository:
+  - a domain + TLS certificate + reverse proxy (config tested);
+  - a production PostgreSQL with scheduled off-host backups and one
+    performed test restore;
+  - a persistent `STORAGE_ROOT` volume;
+  - two recorded owner decisions (manual/offline payments; the
+    password-reset procedure without email).
+
+See DEPLOYMENT.md §13.
 
 **Update 2026-09-26 (go-live blocker closure):**
 - tsc and eslint clean; build succeeds.
