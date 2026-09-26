@@ -88,65 +88,72 @@ export async function recordHeartbeat(
 ) {
   const now = params.now ?? new Date();
 
-  const openSession = await prisma.studyActivitySession.findFirst({
-    where: { studentId: params.studentId, type: params.type, refId: params.refId },
-    orderBy: { lastHeartbeatAt: "desc" },
-  });
+  // One wall clock per student. Each (type, refId) has its own activity
+  // session, but real time is credited at most once: a heartbeat only
+  // credits the part of its gap after the student's latest heartbeat on
+  // ANY activity. Without this, heartbeats for several videos (or a video
+  // and an exercise) at once each credited the same real seconds — a
+  // script could multiply study time. The per-student advisory lock
+  // serializes heartbeats, so concurrent requests (retries, parallel tabs)
+  // can't credit the same seconds twice either.
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`study:${params.studentId}`}))`;
 
-  const gapSeconds = openSession
-    ? (now.getTime() - openSession.lastHeartbeatAt.getTime()) / 1000
-    : Infinity;
+    const [openSession, latest] = await Promise.all([
+      tx.studyActivitySession.findFirst({
+        where: { studentId: params.studentId, type: params.type, refId: params.refId },
+        orderBy: { lastHeartbeatAt: "desc" },
+      }),
+      tx.studyActivitySession.aggregate({
+        where: { studentId: params.studentId },
+        _max: { lastHeartbeatAt: true },
+      }),
+    ]);
 
-  let creditedSeconds = 0;
-  let session;
+    const gapSeconds = openSession
+      ? (now.getTime() - openSession.lastHeartbeatAt.getTime()) / 1000
+      : Infinity;
 
-  if (!openSession || gapSeconds > HEARTBEAT_MAX_GAP_SECONDS) {
-    // Fresh session: nothing to credit yet, this heartbeat just marks start.
-    session = await prisma.studyActivitySession.create({
-      data: {
+    let creditedSeconds = 0;
+    let session;
+
+    if (!openSession || gapSeconds > HEARTBEAT_MAX_GAP_SECONDS) {
+      // Fresh session: nothing to credit yet, this heartbeat just marks start.
+      session = await tx.studyActivitySession.create({
+        data: {
+          studentId: params.studentId,
+          type: params.type,
+          refId: params.refId,
+          startedAt: now,
+          lastHeartbeatAt: now,
+          activeSeconds: 0,
+        },
+      });
+    } else {
+      const alreadyCreditedUntil = latest._max.lastHeartbeatAt ?? openSession.lastHeartbeatAt;
+      const creditFrom = Math.max(openSession.lastHeartbeatAt.getTime(), alreadyCreditedUntil.getTime());
+      creditedSeconds = Math.max(0, (now.getTime() - creditFrom) / 1000);
+      session = await tx.studyActivitySession.update({
+        where: { id: openSession.id },
+        data: {
+          // Never move the clock backwards (an out-of-order request).
+          lastHeartbeatAt: now > openSession.lastHeartbeatAt ? now : openSession.lastHeartbeatAt,
+          activeSeconds: { increment: creditedSeconds },
+        },
+      });
+    }
+
+    if (creditedSeconds > 0) {
+      await applyDailyStudyCredit(tx as unknown as PrismaClient, {
         studentId: params.studentId,
         type: params.type,
-        refId: params.refId,
-        startedAt: now,
-        lastHeartbeatAt: now,
-        activeSeconds: 0,
-      },
-    });
-  } else {
-    creditedSeconds = Math.max(0, gapSeconds);
-    // Optimistic-concurrency guard: the WHERE clause repeats the exact
-    // lastHeartbeatAt just read, so the update only applies if nothing else
-    // has touched this session since. Without it, two near-simultaneous
-    // heartbeat requests (a client retry, a duplicated network request) for
-    // the same session both read the same baseline and would otherwise both
-    // credit the same elapsed gap, double-counting active seconds.
-    const applied = await prisma.studyActivitySession.updateMany({
-      where: { id: openSession.id, lastHeartbeatAt: openSession.lastHeartbeatAt },
-      data: {
-        lastHeartbeatAt: now,
-        activeSeconds: { increment: creditedSeconds },
-      },
-    });
-    if (applied.count === 0) {
-      // Lost the race to a concurrent heartbeat — that other request already
-      // credited this exact gap, so this one credits nothing further.
-      creditedSeconds = 0;
+        seconds: creditedSeconds,
+        day: now,
+      });
     }
-    session = await prisma.studyActivitySession.findUniqueOrThrow({
-      where: { id: openSession.id },
-    });
-  }
 
-  if (creditedSeconds > 0) {
-    await applyDailyStudyCredit(prisma, {
-      studentId: params.studentId,
-      type: params.type,
-      seconds: creditedSeconds,
-      day: now,
-    });
-  }
-
-  return { session, creditedSeconds };
+    return { session, creditedSeconds };
+  });
 }
 
 async function applyDailyStudyCredit(

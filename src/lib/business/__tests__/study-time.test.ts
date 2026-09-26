@@ -275,6 +275,38 @@ describe("study-time heartbeat tracking", () => {
     expect(stat?.videoSeconds).toBe(10);
   });
 
+  it("regression: parallel activities can't multiply real time (one wall clock per student)", async () => {
+    // Before: each (type, refId) had its own clock, so a script sending
+    // heartbeats for three videos and an exercise at once was credited 4×
+    // the real elapsed time.
+    const student = await createStudent();
+    const t0 = new Date("2026-09-18T10:00:00Z");
+    const refs = [
+      { type: "VIDEO" as const, refId: "video-a" },
+      { type: "VIDEO" as const, refId: "video-b" },
+      { type: "VIDEO" as const, refId: "video-c" },
+      { type: "EXERCISE" as const, refId: "exercise-a" },
+    ];
+    for (let step = 0; step <= 6; step++) {
+      const now = new Date(t0.getTime() + step * 10_000);
+      for (const r of refs) await recordHeartbeat(prisma, { studentId: student.id, ...r, now });
+    }
+    const stat = await prisma.dailyStudyStat.findFirst({ where: { studentId: student.id } });
+    expect(stat?.totalActiveSeconds).toBe(60); // 60 real seconds, not 240
+    expect((stat?.videoSeconds ?? 0) + (stat?.exerciseSeconds ?? 0)).toBe(60);
+  });
+
+  it("regression: concurrent heartbeats for different activities credit the wall clock once", async () => {
+    const student = await createStudent();
+    const t0 = new Date("2026-09-18T10:00:00Z");
+    const refs = ["v1", "v2", "v3", "v4", "v5"];
+    await Promise.all(refs.map((refId) => recordHeartbeat(prisma, { studentId: student.id, type: "VIDEO", refId, now: t0 })));
+    const later = new Date(t0.getTime() + 20_000);
+    await Promise.all(refs.map((refId) => recordHeartbeat(prisma, { studentId: student.id, type: "VIDEO", refId, now: later })));
+    const stat = await prisma.dailyStudyStat.findFirst({ where: { studentId: student.id } });
+    expect(stat?.totalActiveSeconds).toBe(20);
+  });
+
   it("does not count time while the video is paused (heartbeats stop)", async () => {
     const student = await createStudent();
     const t0 = new Date("2026-09-18T10:00:00Z");
