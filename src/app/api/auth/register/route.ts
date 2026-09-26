@@ -1,14 +1,14 @@
-import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateShortCode } from "@/lib/id";
 import { toErrorResponse } from "@/lib/rbac";
 import { createPendingReferralReward } from "@/lib/business/referral";
+import { hashPassword, passwordPolicyError } from "@/lib/business/password";
 
 const registerSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
-  password: z.string().min(8),
+  password: z.string(),
   role: z.enum(["STUDENT", "PARENT"]), // teacher/admin accounts are provisioned out-of-band, never self-registered
   referralCode: z.string().trim().optional(),
 });
@@ -17,6 +17,10 @@ export async function POST(request: Request) {
   try {
     const body = registerSchema.parse(await request.json());
     const email = body.email.toLowerCase();
+    const policyError = passwordPolicyError(body.password, { email });
+    if (policyError) {
+      return Response.json({ error: policyError }, { status: 400 });
+    }
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -26,7 +30,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const passwordHash = await bcrypt.hash(body.password, 12);
+    const passwordHash = await hashPassword(body.password);
 
     const { user, studentProfileId } = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({

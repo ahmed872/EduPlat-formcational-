@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { block, unblock } from "./actions";
+import { ResetLinkButton } from "./reset-link-button";
 
 const ROLE_LABELS: Record<string, string> = {
   STUDENT: "طالب",
@@ -57,17 +58,20 @@ export default async function TeacherAccountsPage() {
                       </button>
                     </form>
                   ) : (
-                    <form action={block.bind(null, user.id)} className="flex items-center gap-2">
-                      <input
-                        name="reason"
-                        placeholder="سبب الحظر"
-                        required
-                        className="rounded-md border border-gray-300 px-2 py-1 text-xs"
-                      />
-                      <button type="submit" className="text-xs text-red-600 hover:underline">
-                        حظر
-                      </button>
-                    </form>
+                    <div className="flex flex-col gap-2">
+                      <form action={block.bind(null, user.id)} className="flex items-center gap-2">
+                        <input
+                          name="reason"
+                          placeholder="سبب الحظر"
+                          required
+                          className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                        />
+                        <button type="submit" className="text-xs text-red-600 hover:underline">
+                          حظر
+                        </button>
+                      </form>
+                      <ResetLinkButton userId={user.id} />
+                    </div>
                   )}
                 </td>
               </tr>

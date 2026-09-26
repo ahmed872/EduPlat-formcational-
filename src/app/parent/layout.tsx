@@ -20,6 +20,9 @@ export default async function ParentLayout({ children }: { children: ReactNode }
           <Link href="/parent/announcements" className="text-sm text-gray-500 hover:underline">
             الإعلانات
           </Link>
+          <Link href="/account/password" className="text-sm text-gray-500 hover:underline">
+            تغيير كلمة المرور
+          </Link>
         </div>
         <form
           action={async () => {

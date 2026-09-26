@@ -52,6 +52,9 @@ export default async function StudentLayout({
         <div className="flex shrink-0 items-center gap-3 self-end md:self-auto">
           <NotificationBell />
           <span className="text-sm text-gray-500">{session.user.name}</span>
+          <Link href="/account/password" className="text-sm text-gray-500 hover:underline">
+            كلمة المرور
+          </Link>
           <form
             action={async () => {
               "use server";

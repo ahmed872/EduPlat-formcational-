@@ -1,9 +1,11 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MISSING_CSRF_ERROR, signInWithCsrfRetry } from "@/lib/sign-in-with-csrf-retry";
+import { safeCallbackPath } from "@/lib/safe-redirect";
 
 export function LoginForm() {
   const router = useRouter();
@@ -35,12 +37,24 @@ export function LoginForm() {
       setError("البريد الإلكتروني أو كلمة المرور غير صحيحة");
       return;
     }
-    router.push(searchParams.get("callbackUrl") ?? "/");
+    router.push(safeCallbackPath(searchParams.get("callbackUrl")));
     router.refresh();
   }
 
+  const notice =
+    searchParams.get("reset") === "1"
+      ? "تم تعيين كلمة المرور الجديدة. سجّل الدخول بها."
+      : searchParams.get("passwordChanged") === "1"
+        ? "تم تغيير كلمة المرور وتسجيل خروجك من كل الأجهزة. سجّل الدخول بكلمة المرور الجديدة."
+        : null;
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {notice && (
+        <p role="status" data-testid="login-notice" className="rounded-md bg-green-50 p-3 text-sm text-green-800">
+          {notice}
+        </p>
+      )}
       <label className="flex flex-col gap-1">
         <span className="text-sm text-gray-600">البريد الإلكتروني</span>
         <input
@@ -69,6 +83,9 @@ export function LoginForm() {
       >
         {submitting ? "جاري الدخول..." : "دخول"}
       </button>
+      <Link href="/forgot-password" className="text-center text-sm text-indigo-700 hover:underline">
+        نسيت كلمة المرور؟
+      </Link>
     </form>
   );
 }

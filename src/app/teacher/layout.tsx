@@ -33,6 +33,7 @@ const NAV_ITEMS = [
   { href: "/teacher/payments", label: "المدفوعات" },
   { href: "/teacher/entitlements", label: "منح وصول استثنائي" },
   { href: "/teacher/targets", label: "أهداف المذاكرة" },
+  { href: "/account/password", label: "تغيير كلمة المرور" },
 ];
 
 export default async function TeacherLayout({
