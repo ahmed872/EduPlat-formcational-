@@ -93,6 +93,18 @@ describe("updateTeacherProfile", () => {
 
 // Final audit gap #7: socialLinks/contactInfo/locations existed as real
 // schema columns but had no edit path and no public display at all.
+describe("TeacherProfile photoUrl", () => {
+  it("regression: only http(s) photo URLs are stored (it is rendered as <img src> publicly)", async () => {
+    const teacher = await createTeacherUser();
+    for (const bad of ["javascript:alert(1)", "data:image/svg+xml,<svg onload=alert(1)>", "not a url"]) {
+      await expect(updateTeacherProfile(prisma, { userId: teacher.id, photoUrl: bad })).rejects.toThrow(/http/);
+    }
+    await updateTeacherProfile(prisma, { userId: teacher.id, photoUrl: "https://cdn.example.com/me.jpg" });
+    const profile = await prisma.teacherProfile.findUniqueOrThrow({ where: { userId: teacher.id } });
+    expect(profile.photoUrl).toBe("https://cdn.example.com/me.jpg");
+  });
+});
+
 describe("TeacherProfile socialLinks / contactInfo / locations", () => {
   it("saves all three and reads them back for the public profile", async () => {
     const teacher = await createTeacherUser();

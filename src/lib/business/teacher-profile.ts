@@ -150,6 +150,11 @@ export async function updateTeacherProfile(
   const socialLinks = params.socialLinks ? validateSocialLinks(params.socialLinks) : null;
   const contactInfo = params.contactInfo ? validateContactInfo(params.contactInfo) : null;
   const locations = params.locations ? validateLocations(params.locations) : null;
+  // Rendered as <img src> on the public profile: http(s) only, like the
+  // social links (a javascript:/data: value was stored as-is before).
+  if (params.photoUrl && !isSafeHttpUrl(params.photoUrl)) {
+    throw new Error("رابط الصورة يجب أن يبدأ بـ http:// أو https://");
+  }
 
   const data = {
     bio: params.bio ?? null,
