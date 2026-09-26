@@ -1,6 +1,13 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-26 (release-candidate gate)
+Last updated: 2026-09-26 (infrastructure assessment)
+
+> **Status: NOT READY: application blocker INF-1 is open.** Uploads
+> larger than 10 MB fail, because the Next.js 16 proxy truncates the
+> request body at 10 MB. The fix is identified and verified in a scratch
+> clone, but not applied. See INFRASTRUCTURE.md §0 and
+> FINAL_AUDIT_REPORT.md → Production Readiness Assessment. Server
+> sizing and the deployment plan are in INFRASTRUCTURE.md.
 
 ## Current phase
 
@@ -1584,7 +1591,10 @@ Release-candidate gate, final build (2026-09-26):
 - Clean-clone deployment reproduction: all steps pass, journey 12/12 on
   the fresh install.
 
-Verdict: **READY AFTER OWNER INFRASTRUCTURE SETUP** (FINAL_AUDIT_REPORT.md).
+Verdict at that gate: **READY AFTER OWNER INFRASTRUCTURE SETUP**.
+It is superseded by the infrastructure assessment, which found INF-1
+(uploads > 10 MB fail); current status: **NOT READY**
+(FINAL_AUDIT_REPORT.md).
 
 Browser E2E on the final build of the go-live blocker round (2026-09-26):
 - MUST FIX 32/32, journey 12/12, stress 10/10, original 26/26, CSRF 5/5.

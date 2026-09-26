@@ -393,6 +393,9 @@ change.
   path **without query string**, route, digest, message), because signed
   playback and download tokens live in query strings. Headers and
   cookies are never logged. `/api/health` reports only ok/unavailable.
+  The reverse proxy must do the same. nginx's default access-log format
+  writes the full query string, including tokens (measured 2026-09-26),
+  so DEPLOYMENT.md §5 defines a `$uri`-only `log_format eduplat`.
 - **Error pages:** Arabic `error.tsx` / `global-error.tsx` /
   `not-found.tsx`. In production only a reference digest is shown, never
   the internal message.

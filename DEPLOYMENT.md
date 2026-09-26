@@ -6,6 +6,10 @@ against a production build (`next build` + `next start`). Where a step
 depends on something the owner must supply (a domain, a certificate, a
 managed database, …), it says so.
 
+Server sizing, storage/bandwidth calculations, backup and monitoring
+plans, and the step-by-step procedure from a clean server are in
+[INFRASTRUCTURE.md](INFRASTRUCTURE.md).
+
 **No external integration is configured or tested in this repository:**
 no payment gateway, video CDN, email, SMS, CAPTCHA or monitoring SaaS.
 Payment is manual/offline. Password-reset links are handed over by a
@@ -238,6 +242,11 @@ limit_req_zone $binary_remote_addr zone=reset:10m rate=5r/m;
 limit_req_zone $binary_remote_addr zone=api:10m   rate=20r/s;
 limit_req_status 429;
 
+# Access log WITHOUT the query string: signed playback/download URLs carry
+# their token there (?token=…). $uri is the path only. (http{} context.)
+log_format eduplat '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$http_referer" "$http_user_agent"';
+access_log /var/log/nginx/access.log eduplat;
+
 server {                                   # HTTP → HTTPS
   listen 80;
   server_name edu.example.com;
@@ -261,8 +270,11 @@ server {
 
   client_max_body_size 30m;                # default: attachments ≤ 25 MB
 
-  location /teacher/courses/ { client_max_body_size 510m; proxy_request_buffering off; proxy_pass http://127.0.0.1:3000; }  # lesson video upload (≤ 500 MB)
-  location = /teacher/shorts { client_max_body_size 110m; proxy_request_buffering off; proxy_pass http://127.0.0.1:3000; }  # shorts upload (≤ 100 MB)
+  # Uploads: nginx receives the whole body first (temp file on disk), then
+  # forwards it over loopback in seconds. Node ends any request after 300 s,
+  # so streaming a slow upload straight through would cut it off (HTTP 408).
+  location /teacher/courses/ { client_max_body_size 510m; proxy_request_buffering on; proxy_pass http://127.0.0.1:3000; }  # lesson video upload (≤ ~480 MB file)
+  location = /teacher/shorts { client_max_body_size 110m; proxy_request_buffering on; proxy_pass http://127.0.0.1:3000; }  # shorts upload (≤ 100 MB)
   location = /api/auth/callback/credentials { limit_req zone=login burst=10 nodelay; proxy_pass http://127.0.0.1:3000; }
   location = /api/auth/register            { limit_req zone=login burst=5 nodelay;  proxy_pass http://127.0.0.1:3000; }
   location = /forgot-password               { limit_req zone=reset burst=5 nodelay;  proxy_pass http://127.0.0.1:3000; }
@@ -290,6 +302,31 @@ server {
 - Of 16 rapid sign-in POSTs, the first 10 passed and the rest got 429.
 - A 40 MB POST to `/student` got 413; the same body to `/teacher/shorts`
   passed the proxy (the app then required a session).
+
+**Infrastructure assessment additions (2026-09-26, see INFRASTRUCTURE.md §0):**
+- **Access log.** With nginx's default log format, a real signed
+  playback token appeared in `access.log`. With the `eduplat` format
+  above it did not, and the 8 checks above still passed. nginx's
+  *error* log still records the full request line when an upstream error
+  occurs: keep it root-only with short retention.
+- **Slow uploads.**
+  - A 20 MB upload at 50 KB/s sent straight to Node was cut off with
+    **HTTP 408 after ≈ 300 s**: Node's default `requestTimeout`, which
+    `next start` does not change.
+  - With `proxy_request_buffering on`, nginx writes the body to
+    `client_body_temp_path` (on the system disk, up to ≈ 510 MB per
+    concurrent upload) and hands it to Node in one fast burst. Keep that
+    disk space free.
+  - Measured with that setting: the same 20 MB upload took 410 s and
+    was delivered intact, with no 408.
+  - The temp directory must be writable by the nginx worker user; the
+    distro default is.
+- **Maximum file size.** A 500 MiB file is refused (413): multipart
+  overhead exceeds the 500 MB action limit. Tell teachers the practical
+  maximum is **≈ 480 MB** per video.
+- **Open application blocker INF-1.** Uploads larger than 10 MB fail
+  inside the app, whatever the proxy settings (INFRASTRUCTURE.md §0).
+  The fix is identified but not applied.
 
 **Rate limiting inside the app** (independent of the proxy):
 - Login: 5 failures per email per 15 minutes (configurable).
@@ -478,6 +515,23 @@ DATABASE_URL=postgresql://…/eduplat_restore npx prisma migrate status   # → 
 tar -C /var/lib/eduplat -xzf /backups/eduplat_storage_<date>.tgz        # files
 ```
 
+**Storage size.** The `tar` line above re-copies the whole video
+library every night. That only suits a small library: at 100 videos it
+is already 15–45 GB per night (INFRASTRUCTURE.md §D).
+
+Uploaded files are never modified in place (a replacement is a new
+UUID-named file), so use an **incremental, deduplicating, encrypted**
+file backup instead, e.g. `restic`, `borg` or `rsync --link-dest` to
+off-site storage. Each night then copies only new files.
+
+Keep deleted files for at least 30 days. Example:
+
+```bash
+restic -r <off-site repository> backup /var/lib/eduplat/storage     # nightly
+restic -r <off-site repository> forget --keep-daily 7 --keep-weekly 4 --keep-monthly 3 --prune
+restic -r <off-site repository> restore latest --target /restore/storage   # then compare sha256sum of a sample
+```
+
 **Restore verification** (do this at least once before launch, then
 periodically):
 1. `migrate status` reports "up to date".
@@ -646,7 +700,13 @@ means the platform should not go live without it.
 
 ## 13. Go-live checklist
 
-Owner / infrastructure:
+Application (blocker found by the 2026-09-26 infrastructure assessment):
+- [ ] **INF-1 fixed and released**: uploads larger than 10 MB currently
+      fail (INFRASTRUCTURE.md §0). Verify with a real > 10 MB video
+      upload and its playback.
+
+Owner / infrastructure (server sizing and full procedure:
+INFRASTRUCTURE.md):
 - [ ] Domain + TLS certificate; reverse proxy with the §5 config
       (HTTP→HTTPS, body sizes, rate limits); app bound to `127.0.0.1`.
 - [ ] Production PostgreSQL; `prisma migrate deploy` → "up to date".
@@ -672,8 +732,8 @@ Decisions:
 - [ ] Password-reset procedure agreed: teacher-issued links for students
       and parents, the operator script for the teacher (§6a), or add an
       email provider.
-- [ ] Teachers briefed: upload H.264/AAC MP4; views are counted by the
-      server.
+- [ ] Teachers briefed: upload H.264/AAC MP4, ≤ ≈ 480 MB per video;
+      views are counted by the server.
 
 Verification:
 - [ ] §9 smoke tests pass on the production URL, including the TLS

@@ -13,6 +13,7 @@ Next.js 16 (App Router) · PostgreSQL 16 · Prisma 6 · Auth.js v5.
 | File | What it covers |
 |---|---|
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production setup: environment, migrations, reverse proxy/TLS, private storage, backups, smoke tests, rollback, go-live checklist |
+| [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | Server sizing, storage/bandwidth math, production topology, backup/monitoring/logging plan, step-by-step deployment from a clean server, scaling triggers |
 | [SECURITY.md](SECURITY.md) | Authentication, sessions, authorization, video protection, payments, password recovery, hardening |
 | [DATABASE.md](DATABASE.md) | Schema and migrations |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Code layout and design |

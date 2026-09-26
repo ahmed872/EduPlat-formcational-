@@ -1002,8 +1002,41 @@ tests and, where it has UI, a browser E2E step:
 
 ## Production Readiness Assessment
 
+**Current status (infrastructure assessment, 2026-09-26): NOT READY:
+one application-side blocker (INF-1) is open.** This supersedes the
+release-candidate verdict below.
+
+- **What:** uploading a lesson video, short or attachment **larger than
+  10 MB fails**.
+- **Cause:** Next.js 16 buffers the body of every request that passes
+  through `src/proxy.ts`, and caps that buffer at 10 MB by default
+  (`experimental.proxyClientMaxBodySize`). The proxy matches
+  `/teacher/*`, where the upload Server Actions post, so the action
+  receives a truncated form.
+- **Reproduction:** a 300 MB upload through the real teacher UI on the
+  production build logged
+  `Request body exceeded 10MB for /teacher/courses/…` and
+  `Unexpected end of form`, and the video was not replaced.
+- **Why earlier gates missed it:** all earlier upload fixtures were
+  under 1 MB.
+- **Fix:** identified and **verified in a throwaway clone only**. Server
+  Action POSTs (the `next-action` header) are excluded from the proxy
+  matcher; every action authenticates itself. The same 300 MB upload
+  then succeeded in 8.1 s. It was **not applied**, because that round
+  was planning-only with no application changes. The exact change is in
+  INFRASTRUCTURE.md §0.
+- **To close INF-1:** apply the fix, add a regression upload over 10 MB,
+  then re-run the suites.
+
+The same assessment fixed two configuration issues in DEPLOYMENT.md §5:
+- the nginx access log leaked signed playback tokens;
+- slow uploads were cut off by Node's 300 s request timeout.
+
+It also sized the production environment (INFRASTRUCTURE.md).
+
 **Release-candidate gate verdict (2026-09-26): READY AFTER OWNER
-INFRASTRUCTURE SETUP.**
+INFRASTRUCTURE SETUP.** Superseded above, because INF-1 was found
+afterwards.
 - All application-side defects found in the gate (RC1–RC8) are fixed and
   regression-tested, and no application-side blocker remains.
 - Deployment was reproduced from a fresh clone.
