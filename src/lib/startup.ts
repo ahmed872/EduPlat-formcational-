@@ -4,7 +4,9 @@ import { checkPrivateStorageWritable } from "@/lib/storage/provider";
 /** See src/instrumentation.ts. Never prints secret values. */
 export async function runStartupChecks() {
   const { errors, warnings } = validateServerEnv(process.env);
-  errors.push(...(await checkPrivateStorageWritable()));
+  // Only probe (and create) the storage directories once the configuration
+  // is valid — never under a STORAGE_ROOT that was just rejected.
+  if (errors.length === 0) errors.push(...(await checkPrivateStorageWritable()));
 
   for (const warning of warnings) console.warn(`[startup] warning: ${warning}`);
   if (errors.length === 0) {
