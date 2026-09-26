@@ -1,7 +1,12 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export default async function ShortsFeedPage() {
+  // Rendered per request, like every other page that reads the database:
+  // prerendering it at build time made `next build` require a reachable
+  // production database and baked the build machine's data into the page.
+  await connection();
   const shorts = await prisma.short.findMany({
     where: { status: "PUBLISHED" },
     orderBy: { publishedAt: "desc" },
