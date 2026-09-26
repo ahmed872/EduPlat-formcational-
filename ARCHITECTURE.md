@@ -9,9 +9,13 @@
 - **Database**: PostgreSQL, accessed through Prisma ORM (`prisma/schema.prisma`).
 - **Auth**: NextAuth v5 (Credentials provider), JWT sessions. Role-based
   access control (`STUDENT`, `PARENT`, `TEACHER_ADMIN`) enforced both in
-  `src/proxy.ts` (Next.js's edge-level middleware, renamed "Proxy" in
-  Next 16) and again inside every server component/route/action via
-  `src/lib/rbac.ts` — routing alone is never trusted.
+  `src/proxy.ts` (Next 16 "Proxy", formerly middleware; it runs on the
+  Node.js runtime and re-checks the account in the database on every
+  protected request — blocked, password reset/changed, signed out) and
+  again inside every server component/route/action via `src/lib/rbac.ts`.
+  `TEACHER_ADMIN` is one combined teacher/back-office role for the
+  platform owner; such accounts are only created by the seed or an
+  operator, never by self-registration.
 - **Testing**: Vitest, running business-logic tests against a real,
   disposable PostgreSQL database (`eduplat_test`), not mocks — the tests
   exercise actual Prisma queries and transactions.
@@ -23,8 +27,8 @@
 
 ```
 src/
-  auth.ts / auth.config.ts   NextAuth setup (split so proxy.ts stays edge-safe)
-  proxy.ts                   Route-level RBAC gate for /teacher, /parent, /student
+  auth.ts / auth.config.ts   NextAuth setup (auth.ts adds the live DB session check)
+  proxy.ts                   Route-level gate for /teacher, /parent, /student, /account
   lib/
     prisma.ts                Prisma client singleton
     rbac.ts                  requireRole/requireSession + error → HTTP mapping

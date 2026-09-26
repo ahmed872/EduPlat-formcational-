@@ -2,6 +2,11 @@ import type { PrismaClient } from "@prisma/client";
 import { getPlatformSetting, PLATFORM_SETTING_KEYS } from "@/lib/platform-settings";
 import { ForbiddenError } from "@/lib/rbac";
 
+/**
+ * Records an attempt directly. Request paths must use reserveLoginAttempt()
+ * instead (check-and-record in one step); this remains for setting up test
+ * state and for reading/recording outside a password check.
+ */
 export async function recordLoginAttempt(
   prisma: PrismaClient,
   params: { email: string; succeeded: boolean },
