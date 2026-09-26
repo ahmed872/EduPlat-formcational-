@@ -6,12 +6,12 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import { getAttachmentStorageProvider, getVideoStorageProvider } from "@/lib/storage/provider";
+import { validateVideoUpload } from "@/lib/business/video-upload";
 import { newAttachmentStorageKey, validateAttachmentFile } from "@/lib/business/attachments";
 import { setContentStatus, type ContentKind } from "@/lib/business/content-status";
 import type { ContentStatus, ExperimentType } from "@prisma/client";
 import { buildExperimentConfig } from "@/lib/experiments/definitions";
 
-const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024; // 500MB — matches next.config.ts server action body limit
 
 export async function createCourse(formData: FormData) {
@@ -121,12 +121,8 @@ export async function uploadLessonVideo(
   if (!(file instanceof File) || file.size === 0) {
     throw new Error("الرجاء اختيار ملف فيديو");
   }
-  if (!ALLOWED_VIDEO_TYPES.has(file.type)) {
-    throw new Error("صيغة الفيديو غير مدعومة (MP4 أو WebM أو MOV فقط)");
-  }
-  if (file.size > MAX_VIDEO_BYTES) {
-    throw new Error("حجم الفيديو أكبر من الحد المسموح (500 ميجابايت)");
-  }
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const ext = validateVideoUpload({ type: file.type, size: file.size, bytes: buffer }, MAX_VIDEO_BYTES, "500 ميجابايت");
 
   const title = String(formData.get("title") ?? "").trim();
   const durationSeconds = Number(formData.get("durationSeconds") ?? 0);
@@ -137,35 +133,44 @@ export async function uploadLessonVideo(
 
   const storage = getVideoStorageProvider();
   const existing = await prisma.video.findUnique({ where: { lessonId } });
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const storageKey = storage.generateKey(file.name);
+  const storageKey = storage.generateKey(`video${ext}`);
   await storage.save(storageKey, buffer);
 
-  if (existing) {
+  try {
+    if (existing) {
+      // Point the row at the new file first; the old file is removed only
+      // once nothing references it (a failed update keeps the old video).
+      // Replacing the file keeps the video's status: a draft or archived
+      // video must not become visible just because its file changed.
+      await prisma.video.update({
+        where: { id: existing.id },
+        data: {
+          title,
+          storageProvider: storage.name,
+          storageKey,
+          durationSeconds,
+          isFree,
+        },
+      });
+    } else {
+      await prisma.video.create({
+        data: {
+          lessonId,
+          title,
+          storageProvider: storage.name,
+          storageKey,
+          durationSeconds,
+          isFree,
+          status: "PUBLISHED",
+        },
+      });
+    }
+  } catch (error) {
+    await storage.delete(storageKey);
+    throw error;
+  }
+  if (existing && existing.storageKey !== storageKey) {
     await storage.delete(existing.storageKey);
-    await prisma.video.update({
-      where: { id: existing.id },
-      data: {
-        title,
-        storageProvider: storage.name,
-        storageKey,
-        durationSeconds,
-        isFree,
-        status: "PUBLISHED",
-      },
-    });
-  } else {
-    await prisma.video.create({
-      data: {
-        lessonId,
-        title,
-        storageProvider: storage.name,
-        storageKey,
-        durationSeconds,
-        isFree,
-        status: "PUBLISHED",
-      },
-    });
   }
 
   revalidatePath(`/teacher/courses/${courseId}`);
