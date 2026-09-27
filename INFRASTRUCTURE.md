@@ -14,47 +14,72 @@ DEPLOYMENT.md remains the operational runbook. This document sizes and
 designs the environment it runs in.
 
 > **Read §0 first.** The assessment found one application-side defect
-> that blocks real video uploads. It is not fixed in this round, which
-> was planning only; the fix is identified and was verified in a scratch
-> copy.
+> that blocked real video uploads (INF-1). It was fixed and revalidated
+> on 2026-09-27 with real uploads up to the 480 MiB maximum through
+> nginx + TLS; see §0.
 
 ---
 
-## 0. Findings of this assessment that change the release status
+## 0. Findings of this assessment that changed the release status
 
 | # | Severity | Finding | Evidence | Status |
 |---|---|---|---|---|
-| INF-1 | **Launch blocker (application)** | **Every video, short or attachment upload larger than 10 MB fails in production.** Next.js 16 buffers the body of every request that passes through `proxy.ts` and caps that buffer at 10 MB by default (`experimental.proxyClientMaxBodySize`). `proxy.ts` matches `/teacher/*`, where the upload Server Actions post, so the action receives a truncated form and throws `Unexpected end of form`. The earlier test suites used fixtures under 1 MB, which is why no suite caught it. | **measured:** a 300 MB upload through the real teacher UI logged `Request body exceeded 10MB for /teacher/courses/…` + `Unexpected end of form`; the video was not replaced. | **Not fixed in this round** (planning only, no application changes). The fix below was **verified in a throwaway clone**: the same 300 MB upload then took 8.1 s, stored 300 MB, and the old file was removed. It must be applied, regression-tested and released before launch. |
-| INF-2 | Security (logging) | The documented nginx config used the default access-log format, which records the full request line — including the signed `?token=` of every video/attachment URL (valid 4 h / 10 min). | **measured:** a real signed playback token appeared in `access.log`; with the log format in §M it no longer did, and the TLS checks still passed 8/8. | Fixed in DEPLOYMENT.md §5 (documentation/configuration only). |
-| INF-3 | Operational | Node's HTTP server ends any request that takes longer than **300 s** (`requestTimeout`; Next.js does not change it). With `proxy_request_buffering off` (the previous config), nginx streams a slow upload straight to Node, so a large video on a slow uplink is cut off. | **measured:** a 20 MB upload at 50 KB/s sent straight to Node got **HTTP 408 after ≈ 300 s** (16.6 of 20 MB received). The same upload through nginx with `proxy_request_buffering on` took 410 s, and the app answered normally (no 408). | Fixed in DEPLOYMENT.md §5 (configuration only, verified): nginx receives the whole upload body first (`proxy_request_buffering on`), then forwards it over loopback in seconds. |
-| INF-4 | Operational | A file of exactly 500 MiB is refused (HTTP 413): multipart overhead pushes the body over the 500 MB Server Action limit. | **measured:** a 500 MiB upload → `Body exceeded 500mb limit`. | Documented: the practical maximum per video is **about 480 MB**. |
+| INF-1 | **Launch blocker (application)** | **Every video, short or attachment upload larger than 10 MB failed in production.** Next.js 16 buffers the body of every request that passes through `proxy.ts`, capped at 10 MB by default (`experimental.proxyClientMaxBodySize`). `proxy.ts` matched `/teacher/*`, where the upload Server Actions post, so the action received a truncated form (`Unexpected end of form`). Earlier suites used fixtures under 1 MB. | **measured:** a 300 MB upload through the real teacher UI logged `Request body exceeded 10MB for /teacher/courses/…`; the video was not replaced. | **Fixed 2026-09-27** (see "INF-1 fix" below): real uploads of 1, 10, 20, 100, 300 MiB and 480 MiB − 64 KiB through nginx + TLS stored byte-identical files; over-maximum uploads are refused. |
+| INF-2 | Security (logging) | The nginx config's default access-log format recorded the full request line, including the signed `?token=` of every video/attachment URL (valid 4 h / 10 min). nginx's error log does the same for upstream failures and rate-limit rejections. | **measured:** a real playback token appeared in `access.log`; after the access-log fix, 53 error-log entries still carried `token=` under generated 4xx/5xx/429 traffic. With the final config: 0 in the access log, error log and app log, for the same traffic. | Fixed in DEPLOYMENT.md §5 (configuration only). |
+| INF-3 | Operational | Node's HTTP server ends any request that takes longer than **300 s** (`requestTimeout`; Next.js does not change it). With `proxy_request_buffering off` (the earlier config), a slow upload streamed straight to Node was cut off. | **measured:** a 20 MB upload at 50 KB/s straight to Node got **HTTP 408 after ≈ 300 s**. Through nginx with `proxy_request_buffering on`, after the INF-1 fix: a real 20 MiB Server Action upload at 60 KB/s took **341.5 s** and was stored intact (checksum match). | Fixed in DEPLOYMENT.md §5 (configuration only). |
+| INF-4 | Operational | A file of exactly 500 MiB was refused with a bare error: multipart overhead pushes the body over the 500 MiB Server Action limit. | **measured** | Fixed: the application now caps a lesson video at **480 MiB (503,316,480 bytes)** with a clear message, below the 500 MiB body limit. |
+| INF-5 | Operational | By default nginx spools up to 1 GB of a video response per slow viewer into a temp file on the system disk; the app then counts bytes nginx pulled ahead as delivered. With an unwritable temp directory the stream was cut short. | **measured:** a 300 MiB stream to a 20 MB/s client came back corrupt under the earlier config (temp dir not writable by the worker, test environment) and intact with `proxy_max_temp_file_size 0`. | Fixed in DEPLOYMENT.md §5 (configuration only). |
 
-**INF-1 fix (verified in a scratch clone, not applied):** in
-`src/proxy.ts`, exclude Server Action POSTs from the proxy matcher. The
-proxy never needs to see a Server Action body, and every Server Action
-already authenticates itself (all 89 were checked in the release gate).
-Page loads and client-side navigations still pass through the proxy's
-live session check.
-
-```ts
-export const config = {
-  matcher: [
-    { source: "/teacher/:path*", missing: [{ type: "header", key: "next-action" }] },
-    { source: "/parent/:path*",  missing: [{ type: "header", key: "next-action" }] },
-    { source: "/student/:path*", missing: [{ type: "header", key: "next-action" }] },
-    { source: "/account/:path*", missing: [{ type: "header", key: "next-action" }] },
-  ],
-};
-```
+**INF-1 fix (applied 2026-09-27):**
+- `src/proxy.ts`: Server Action requests (the `next-action` header) to
+  exactly the two upload pages, `/teacher/courses/<id>` and
+  `/teacher/shorts`, skip the proxy, so their bodies are not buffered.
+  Everything else under `/teacher`, `/parent`, `/student` and `/account`
+  still passes through it, with or without the header.
+- Those two pages now check the session and the `TEACHER_ADMIN` role
+  themselves before reading any data.
+- The upload actions still authenticate, check the role, validate type,
+  content and size, and write only under `STORAGE_ROOT` with random names.
+  The video upload now also checks that the lesson belongs to the course.
+- The exception is kept narrow for a reason. The header is
+  client-controlled, and Next renders a page alongside its layout. With
+  the fix first tried in the scratch clone (bypass for any `next-action`
+  request), a guest `GET` carrying the header received the teacher
+  course page's data: lesson titles and IDs, statuses and the upload UI.
+  That was measured, and it is why the fix was not applied as first
+  written.
+- Storage writes go to a temporary file that is then renamed. A failed
+  write (disk full, crash) leaves no partial file, and the key only ever
+  names a complete file.
+- Parallel replacements of one lesson's video are serialized, so none
+  leaves an unreferenced file. This was reproduced in the E2E run before
+  the fix: 1 orphan from 3 parallel replacements.
 
 Rejected alternative: raising `experimental.proxyClientMaxBodySize` to
-about 510 MB. It would make the proxy hold a second full in-memory copy
-of every upload.
+about 510 MB. It would make the proxy hold another full in-memory copy
+of every upload, for every teacher request.
 
-The fix needs a regression test that uploads a file larger than 10 MB
-through the real route, plus a re-run of the full suites. Until it
-ships, **the release status is NOT READY**: teachers cannot upload real
-lesson videos.
+**Upload architecture (as implemented):**
+1. The browser posts a multipart Server Action to nginx (TLS).
+2. nginx receives the whole body to a temp file on the system disk, up
+   to 510 MiB per upload.
+3. nginx forwards it over loopback in seconds.
+4. Next.js skips `proxy.ts` for this request only.
+5. The upload action runs: `auth()`, the live session check, the
+   `TEACHER_ADMIN` role, lesson ∈ course, type, content and size
+   validation.
+6. The file is written to a temp name and renamed to a random UUID under
+   `STORAGE_ROOT`.
+7. The DB row is updated under a per-lesson lock, and the replaced file
+   is deleted.
+
+**Upload limits (from the code, measured):**
+
+| Kind | Maximum file | What rejects it |
+|---|---|---|
+| Lesson video | **480 MiB** (503,316,480 bytes) | Above 480 MiB: the app ("حجم الفيديو أكبر من الحد المسموح (480 ميجابايت)"). Above the 500 MiB body: Next.js. Above 510 MiB: nginx 413. |
+| Short | 100 MiB | App; nginx above 110 MiB |
+| Attachment | 25 MiB | App; nginx above 30 MiB for other paths |
 
 ---
 
@@ -94,7 +119,7 @@ limits (§E).
 | CPU | **2 vCPU** | Streaming saturates ≈ 1 core only at multi-Gbit rates (measured). bcrypt (cost 12) costs ≈ 0.25 s CPU per login. A cold build used 2.3 cores for 37 s (measured). |
 | RAM | **4 GB + 2 GB swap** | OS ≈ 0.4 GB + PostgreSQL ≈ 0.5–1 GB + Node idle 0.23 GB + **one ≈ 450 MB upload peaks at 1.6 GB** (measured) + nginx/page cache. A cold build peaks at 1.44 GB (measured), so on 4 GB build while the app is stopped, or build elsewhere. 2 GB is **not** enough: one large upload plus PostgreSQL would exhaust it. |
 | OS | Ubuntu 24.04 LTS or Debian 12 (x86-64) | Tested platform |
-| System disk | 25 GB SSD | OS + app (≈ 1.1 GB) + PostgreSQL (< 1 GB in year 1) + logs + nginx upload buffer (up to ≈ 0.5 GB per concurrent upload, INF-3) |
+| System disk | 25 GB SSD | OS + app (≈ 1.1 GB) + PostgreSQL (< 1 GB in year 1) + logs + nginx upload buffer (up to 510 MiB per concurrent upload, INF-3) |
 | Storage (`STORAGE_ROOT`) | Separate volume sized from §D, at least 50 GB to start | Videos dominate |
 | Storage type | Block storage / local SSD with a POSIX filesystem (ext4/xfs) | Range reads; the app writes files with mode 600 |
 | PostgreSQL | Same machine, 0.5–1 GB RAM share (`shared_buffers` ≈ 256 MB), `max_connections` 100 (default) | Dev DB: 295 users = 13 MB. The app uses one Prisma pool (default size = CPUs × 2 + 1) |
@@ -135,8 +160,8 @@ limits (§E).
   With `proxy_request_buffering on` (INF-3), nginx writes each upload
   body to its client-body temp directory first: up to ≈ 510 MB per
   concurrent upload on the **system disk**.
-- **Limits (from the code):** video ≤ 500 MB, but ≈ 480 MB in practice
-  (INF-4); short ≤ 100 MB; attachment ≤ 25 MB.
+- **Limits (from the code):** video ≤ 480 MiB (INF-4); short ≤ 100 MiB;
+  attachment ≤ 25 MiB.
 
 **Per-file size estimates** (a video file's size is bitrate × duration):
 - A lesson video at 720p H.264 (1.5–3 Mbit/s) is 11–22 MB per minute,
@@ -345,7 +370,7 @@ be created, not writable, or hangs (5 s probe).
 
 **Verification** (run it once at launch; it is the same procedure as
 the clean-clone reproduction, which passed):
-1. Upload a video (> 10 MB, once INF-1 is fixed) and an attachment as
+1. Upload a video (> 10 MB) and an attachment as
    the teacher.
 2. `sha256sum` the new files in `$STORAGE_ROOT`.
 3. `systemctl restart eduplat`, then download the attachment as the
@@ -396,7 +421,7 @@ library, plus deleted files kept by retention. DB dumps are small
 |---|---|---|---|
 | App (stdout/stderr) | journald (`journalctl -u eduplat`) | journald limits (`SystemMaxUse=`, e.g. 1 GB) | `[startup]` lines; one JSON line per server error (method, **path without query string**, route, digest, message); `[password-reset]` notice without email/token; `[stream]` accounting errors; Next.js warnings |
 | nginx access | `/var/log/nginx/access.log` | logrotate (distro default: daily, 14 files, compressed) | **Use the `eduplat` log format** (DEPLOYMENT.md §5): `$uri` without the query string, so signed `?token=` values are never written (INF-2, measured) |
-| nginx error | `/var/log/nginx/error.log` | logrotate | Upstream errors. nginx logs the full request line on errors, so treat this file as sensitive (see below). |
+| nginx error | `/var/log/nginx/error.log` | logrotate | Upstream errors and rate-limit rejections. nginx writes the full request line into error entries, so the two signed-URL locations (`/api/stream/`, `/api/attachments/`) keep no error log; their failures still show in the access log (status, `$upstream_status`, `$request_time`) and in the app log |
 | PostgreSQL | `/var/log/postgresql/` | distro logrotate | Connections and errors; enable slow-query logging only if needed |
 
 **Must never appear:** passwords, reset tokens, `AUTH_SECRET`, database
@@ -409,10 +434,11 @@ credentials, signed private URLs, or student personal data.
 - No `console.*` call prints a token, password or email.
 - Startup messages name variables, never values.
 - The nginx access log is clean with the `eduplat` format.
-- **Residual:** nginx's *error* log includes the request line (with
-  `?token=`) when an upstream error occurs. Keep it root-readable only,
-  short retention (7–14 days), and never ship it to third parties
-  unredacted.
+- The nginx error log carries no signed token. Measured 2026-09-27: the
+  same generated traffic (200/206, 401/403, 413, 429 bursts, 502 with
+  the app stopped) wrote 53 `token=` entries before the fix and 0 after,
+  in the access, error and app logs. The upstream outage was still
+  logged, via `/api/health`.
 
 **Disk impact** (estimate): access logs are ≈ 200 bytes per request, so
 ≈ 20–50 MB per day at a few hundred active users. Compressed rotation
@@ -457,7 +483,7 @@ match a user-reported Arabic error page with the JSON line's `digest`.
 
 ## O. Exact deployment procedure (clean Ubuntu 24.04 server — not executed)
 
-> Prerequisite: INF-1 fixed and released. Replace `edu.example.com`,
+> Prerequisite: the INF-1 release (2026-09-27) or later. Replace `edu.example.com`,
 > `<release-commit>` and the paths as needed.
 
 ```bash
@@ -604,7 +630,7 @@ sudo systemctl restart eduplat && curl -fsS https://edu.example.com/api/health
 
 ## S. Final pre-deployment checklist
 
-- [ ] **INF-1 fixed, regression-tested with a > 10 MB upload, released** (application blocker)
+- [ ] Deployed build includes the INF-1 fix; a > 10 MB video upload and its playback verified on the server
 - [ ] Server meets §B (minimum) or §C (recommended); swap configured
 - [ ] Storage volume mounted persistently at `STORAGE_ROOT`'s parent; owner `eduplat`, mode 700
 - [ ] PostgreSQL 16 reachable only locally or privately; `migrate status` up to date on the **production** DB
@@ -618,7 +644,7 @@ sudo systemctl restart eduplat && curl -fsS https://edu.example.com/api/health
 - [ ] Backups configured, run once, **restored once** and verified by checksums
 - [ ] Restart test passed (files and sessions intact)
 - [ ] Owner decisions recorded: manual/offline payments; password-reset procedure without email
-- [ ] Teachers briefed: H.264/AAC MP4, ≤ ≈ 480 MB per video (≈ 20–25 min at 720p)
+- [ ] Teachers briefed: H.264/AAC MP4, ≤ 480 MiB per video (≈ 20–25 min at 720p)
 
 ## T. Risks and assumptions
 
@@ -644,8 +670,9 @@ sudo systemctl restart eduplat && curl -fsS https://edu.example.com/api/health
      between the browser and nginx, which only times out on 60 s of
      inactivity.
    - nginx then forwards the file to Node over loopback in seconds.
-   - Measured: 408 at ≈ 300 s without the mitigation; the full upload
-     completed over 410 s with it.
+   - Measured: 408 at ≈ 300 s without the mitigation; with it, a real
+     20 MiB upload at 60 KB/s completed after 341.5 s and was stored
+     intact.
 7. The **seed and the reset-link script need dev dependencies**
    (`tsx`), so `npm ci` must include them (it does by default).
 8. **No automated backups, monitoring, scheduler, CDN, HLS/DRM, email or

@@ -1002,41 +1002,106 @@ tests and, where it has UI, a browser E2E step:
 
 ## Production Readiness Assessment
 
-**Current status (infrastructure assessment, 2026-09-26): NOT READY:
-one application-side blocker (INF-1) is open.** This supersedes the
-release-candidate verdict below.
+**Current status (INF-1 fix and production revalidation, 2026-09-27):
+READY AFTER OWNER INFRASTRUCTURE SETUP.** The one application-side
+blocker found by the infrastructure assessment (INF-1) is fixed. It was
+verified with real uploads larger than 10 MB through the production-style
+path: browser → nginx (TLS) → Server Action → private storage. No
+application-side blocker is open.
 
-- **What:** uploading a lesson video, short or attachment **larger than
-  10 MB fails**.
-- **Cause:** Next.js 16 buffers the body of every request that passes
-  through `src/proxy.ts`, and caps that buffer at 10 MB by default
-  (`experimental.proxyClientMaxBodySize`). The proxy matches
-  `/teacher/*`, where the upload Server Actions post, so the action
-  receives a truncated form.
-- **Reproduction:** a 300 MB upload through the real teacher UI on the
-  production build logged
-  `Request body exceeded 10MB for /teacher/courses/…` and
-  `Unexpected end of form`, and the video was not replaced.
-- **Why earlier gates missed it:** all earlier upload fixtures were
-  under 1 MB.
-- **Fix:** identified and **verified in a throwaway clone only**. Server
-  Action POSTs (the `next-action` header) are excluded from the proxy
-  matcher; every action authenticates itself. The same 300 MB upload
-  then succeeded in 8.1 s. It was **not applied**, because that round
-  was planning-only with no application changes. The exact change is in
-  INFRASTRUCTURE.md §0.
-- **To close INF-1:** apply the fix, add a regression upload over 10 MB,
-  then re-run the suites.
+**INF-1: uploads larger than 10 MB failed**
 
-The same assessment fixed two configuration issues in DEPLOYMENT.md §5:
-- the nginx access log leaked signed playback tokens;
-- slow uploads were cut off by Node's 300 s request timeout.
+Cause: Next.js 16 buffers every body that passes through `src/proxy.ts`,
+capped at 10 MB, and the proxy matched the teacher upload pages.
 
-It also sized the production environment (INFRASTRUCTURE.md).
+Fix:
+- Server Action requests to exactly `/teacher/courses/<id>` and
+  `/teacher/shorts` skip the proxy.
+- Both pages now check the session and role themselves before reading
+  data.
+- `src/__tests__/proxy.test.ts` pins the matcher using Next's own matcher
+  evaluation.
+
+Why the scratch-clone fix was not shipped as written: it bypassed the
+proxy for any request carrying the client-controlled `next-action`
+header. Probed on a production build, a **guest `GET` with that header
+received the teacher course page's data** (lesson titles and IDs,
+statuses, the upload UI). Next renders a page alongside its layout, so
+the layout's redirect does not stop the page's payload. With the scoped
+fix, a guest probe of both pages (plain, RSC with a forged router tree,
+bogus action POST, `.rsc`) returns only a redirect, with no page data.
+
+Real uploads through nginx + TLS on the production build (upload E2E
+35/35):
+
+| Upload | Result |
+|---|---|
+| 1 / 10 / 20 / 100 / 300 MiB and 480 MiB − 64 KiB lesson videos | Stored; DB row correct; sha256 of the stored file = source; mode 600; previous file removed. 300 MiB took 3.7 s, peak server RSS 1.75 GB. |
+| 300 MiB playback | The entitled student streamed 314,572,800 bytes with a matching sha256. It decoded and played in Chromium's `<video>`. After an app restart, the file and stream checksums still matched. |
+| 20 MiB short, 19.3 MB PDF attachment | Stored intact; the attachment downloaded byte-identical; guest 401, other student 403 |
+| 481 MiB / 505 MiB / 520 MiB | Refused by the app cap / Next.js body limit / nginx 413; no file written, current video intact |
+| 20 MiB at 60 KB/s (341.5 s, beyond Node's 300 s timeout) | Stored intact (nginx receives the whole body first) |
+
+Refused, with no file written and no row changed:
+- guest, student, parent, and a teacher cookie revoked by sign-out;
+- a malformed lessonId (traversal string; 5,000 chars) or a malformed
+  courseId;
+- a lesson of another course;
+- HTML named `.mp4`; MP4 declared WebM and WebM declared MP4; a
+  `text/html` type; an empty file;
+- a foreign Origin.
+
+Also verified:
+- A traversal filename is stored under a random UUID inside
+  `STORAGE_ROOT` only.
+- An upload to a DRAFT lesson stays invisible even to an entitled
+  student. One to an ARCHIVED lesson is visible only to existing holders,
+  per the documented archived rule.
+- Copied, tampered and missing-token stream URLs are refused (403/401),
+  and storage paths return 404.
+
+Defects found and fixed while revalidating (each reproduced first, with
+a regression test):
+1. **Partial file on a failed write:** storage wrote straight to the
+   final key. It now writes a temp file and renames it (unit test: a
+   simulated disk-full write left a truncated file before the fix and
+   leaves nothing after).
+2. **Orphan file from parallel replacements** (E2E: 1 orphan from 3
+   parallel replacements): replacement is now serialized per lesson
+   (`replaceLessonVideoFile`, advisory lock). The regression tests fail
+   without the lock.
+3. **Lesson/course mismatch accepted:** the bound IDs arrive as plain,
+   client-editable JSON. The video upload now checks that the lesson
+   belongs to the course, as the attachment upload already did. Only
+   `TEACHER_ADMIN` could send it (single-owner model), so this was an
+   integrity fix, not an access bypass.
+4. **Maximum size:** the video cap is now 480 MiB in code (was 500 MB,
+   which collided with the 500 MiB body limit).
+
+nginx configuration fixes (DEPLOYMENT.md §5, the tested config):
+- **Signed tokens in the error log:** 53 entries under generated
+  4xx/5xx/429 traffic before, 0 after, in the access, error and app
+  logs.
+- **Video responses spooled to disk:** `proxy_max_temp_file_size 0`. A
+  300 MiB stream to a slow client came back corrupt before (test temp
+  dir not writable) and intact after.
+- **Reset rate limit consumed by the login page's prefetch:** it is now
+  keyed on POST. 6 page loads from one IP had locked the form (429); now
+  12 page loads → 200 and submissions are still limited. This caused a
+  TLS-suite failure during this round and is now a regression step.
+
+Open observation (pre-existing, not changed in this round): entitlement
+rows record the lesson's video id at grant time. A lesson published and
+granted or subscribed **before** it has a video will not be playable by
+those holders once its first video is uploaded (`NOT_ENTITLED`).
+Replacing an existing video keeps its id and is unaffected.
+- Workaround: upload the video before publishing the lesson.
+- A fix would change entitlement semantics and needs an owner decision.
 
 **Release-candidate gate verdict (2026-09-26): READY AFTER OWNER
-INFRASTRUCTURE SETUP.** Superseded above, because INF-1 was found
-afterwards.
+INFRASTRUCTURE SETUP.** It was superseded on 2026-09-26 by NOT READY
+when INF-1 was found, and restored on 2026-09-27 once INF-1 was fixed
+and revalidated (above).
 - All application-side defects found in the gate (RC1–RC8) are fixed and
   regression-tested, and no application-side blocker remains.
 - Deployment was reproduced from a fresh clone.

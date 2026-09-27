@@ -228,8 +228,9 @@ The app sets its own security headers on every response:
 - no `X-Powered-By`.
 
 The proxy must provide TLS and the limits below. The app's Server Action
-body limit is 500 MB **globally** (the video upload needs it), so
-restrict body size per path at the proxy.
+body limit is 500 MiB **globally** (the video upload needs it; the video
+file itself is capped at 480 MiB), so restrict body size per path at the
+proxy.
 
 This exact configuration was run in front of the production build during
 the 2026-09-26 audit. The test used a self-signed certificate on :8443,
@@ -238,13 +239,18 @@ Use it with your domain and certificate:
 
 ```nginx
 limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
-limit_req_zone $binary_remote_addr zone=reset:10m rate=5r/m;
+# Only submissions (POST) count toward the reset limit: the login page
+# prefetches /forgot-password on every visit. An empty key is not limited.
+map $request_method $reset_limit_key { POST $binary_remote_addr; default ""; }
+limit_req_zone $reset_limit_key zone=reset:10m rate=5r/m;
 limit_req_zone $binary_remote_addr zone=api:10m   rate=20r/s;
 limit_req_status 429;
 
-# Access log WITHOUT the query string: signed playback/download URLs carry
-# their token there (?token=…). $uri is the path only. (http{} context.)
-log_format eduplat '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$http_referer" "$http_user_agent"';
+# Access log WITHOUT query strings: signed playback/download URLs carry
+# their token there (?token=…). $uri is the path only; the Referer is cut at
+# "?". Timing and upstream status keep 5xx diagnosable. (http{} context.)
+map $http_referer $referer_path { "~^(?<p>[^?#]*)" $p; default "-"; }
+log_format eduplat '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$referer_path" "$http_user_agent" $request_time $upstream_status';
 access_log /var/log/nginx/access.log eduplat;
 
 server {                                   # HTTP → HTTPS
@@ -273,12 +279,21 @@ server {
   # Uploads: nginx receives the whole body first (temp file on disk), then
   # forwards it over loopback in seconds. Node ends any request after 300 s,
   # so streaming a slow upload straight through would cut it off (HTTP 408).
-  location /teacher/courses/ { client_max_body_size 510m; proxy_request_buffering on; proxy_pass http://127.0.0.1:3000; }  # lesson video upload (≤ ~480 MB file)
+  location /teacher/courses/ { client_max_body_size 510m; proxy_request_buffering on; proxy_pass http://127.0.0.1:3000; }  # lesson video upload (file ≤ 480 MiB)
   location = /teacher/shorts { client_max_body_size 110m; proxy_request_buffering on; proxy_pass http://127.0.0.1:3000; }  # shorts upload (≤ 100 MB)
   location = /api/auth/callback/credentials { limit_req zone=login burst=10 nodelay; proxy_pass http://127.0.0.1:3000; }
   location = /api/auth/register            { limit_req zone=login burst=5 nodelay;  proxy_pass http://127.0.0.1:3000; }
   location = /forgot-password               { limit_req zone=reset burst=5 nodelay;  proxy_pass http://127.0.0.1:3000; }
   location = /reset-password                { limit_req zone=reset burst=10 nodelay; proxy_pass http://127.0.0.1:3000; }
+  # Signed URLs: nginx writes the full request line, token included, into
+  # error-log entries (upstream failures, rate-limit rejections), so these
+  # two locations keep no error log; the access log still records status,
+  # upstream status and timing, and the app logs its own errors by path.
+  # Video responses are not spooled to disk: by default nginx pulls up to
+  # 1 GB ahead per slow viewer into a temp file, and the app would count
+  # those bytes as watched.
+  location /api/stream/      { limit_req zone=api burst=60 nodelay; error_log /dev/null; proxy_max_temp_file_size 0; proxy_pass http://127.0.0.1:3000; }
+  location /api/attachments/ { limit_req zone=api burst=60 nodelay; error_log /dev/null; proxy_pass http://127.0.0.1:3000; }
   location /api/ { limit_req zone=api burst=60 nodelay; proxy_pass http://127.0.0.1:3000; }
   location /     { proxy_pass http://127.0.0.1:3000; }
 }
@@ -303,30 +318,49 @@ server {
 - A 40 MB POST to `/student` got 413; the same body to `/teacher/shorts`
   passed the proxy (the app then required a session).
 
-**Infrastructure assessment additions (2026-09-26, see INFRASTRUCTURE.md §0):**
-- **Access log.** With nginx's default log format, a real signed
-  playback token appeared in `access.log`. With the `eduplat` format
-  above it did not, and the 8 checks above still passed. nginx's
-  *error* log still records the full request line when an upstream error
-  occurs: keep it root-only with short retention.
+**Infrastructure assessment and INF-1 revalidation (2026-09-26/27, see
+INFRASTRUCTURE.md §0):**
+- **Logs carry no signed token.**
+  - With nginx's default access-log format, a real playback token
+    appeared in `access.log`.
+  - nginx also writes the full request line into error-log entries
+    (upstream failures, rate-limit rejections).
+  - Generated traffic of 200/206, 401/403, 413, 429 bursts and 502 with
+    the app stopped wrote 53 `token=` error-log entries before the
+    config above, and 0 in the access, error and app logs with it.
+  - The outage was still logged via `/api/health`, and the access log
+    shows the token routes' 502 with upstream status and timing.
 - **Slow uploads.**
-  - A 20 MB upload at 50 KB/s sent straight to Node was cut off with
+  - A 20 MB upload at 50 KB/s straight to Node was cut off with
     **HTTP 408 after ≈ 300 s**: Node's default `requestTimeout`, which
     `next start` does not change.
-  - With `proxy_request_buffering on`, nginx writes the body to
-    `client_body_temp_path` (on the system disk, up to ≈ 510 MB per
-    concurrent upload) and hands it to Node in one fast burst. Keep that
-    disk space free.
-  - Measured with that setting: the same 20 MB upload took 410 s and
-    was delivered intact, with no 408.
-  - The temp directory must be writable by the nginx worker user; the
-    distro default is.
-- **Maximum file size.** A 500 MiB file is refused (413): multipart
-  overhead exceeds the 500 MB action limit. Tell teachers the practical
-  maximum is **≈ 480 MB** per video.
-- **Open application blocker INF-1.** Uploads larger than 10 MB fail
-  inside the app, whatever the proxy settings (INFRASTRUCTURE.md §0).
-  The fix is identified but not applied.
+  - With `proxy_request_buffering on`, a real 20 MiB Server Action upload
+    at 60 KB/s took **341.5 s** and was stored intact (checksum match).
+  - nginx writes the body to `client_body_temp_path` on the system disk,
+    up to 510 MiB per concurrent upload. Keep that space free, and the
+    directory writable by the nginx worker (the distro default is).
+- **Video responses.** With `proxy_max_temp_file_size 0`, a 300 MiB
+  stream to a slow (20 MB/s) client arrived intact. The earlier config
+  corrupted it in the test environment, because nginx tried to spool it
+  to a temp directory the worker could not write.
+- **Reset rate limit counts submissions only.**
+  - Keyed on the location, page loads and the login page's prefetch of
+    `/forgot-password` used up the limit: 6 page loads from one IP, then
+    the form got 429.
+  - A school or NAT address with a few logins a minute would have
+    locked everyone behind it out of "forgot password".
+  - With the POST-keyed limit above: 12 page loads → 200, and
+    submissions → 429 after the burst.
+- **Upload sizes (real UI uploads through this proxy, checksums
+  verified):**
+  - 1, 10, 20, 100 and 300 MiB, and 480 MiB − 64 KiB, all stored
+    intact.
+  - Above 480 MiB, the app refuses the file.
+  - Above the 500 MiB body limit, Next.js refuses it.
+  - Above 510 MiB, nginx returns 413.
+  - Nothing is written for any refused upload.
+  - The **maximum lesson video is 480 MiB** (503,316,480 bytes); tell
+    teachers.
 
 **Rate limiting inside the app** (independent of the proxy):
 - Login: 5 failures per email per 15 minutes (configurable).
@@ -363,8 +397,8 @@ limits above.
 **What is enforced on upload:**
 - **Videos and shorts:** the declared type must be MP4, WebM or MOV, and
   the bytes must start with an ISO-BMFF `ftyp` box or a WebM EBML header
-  that matches the declared type. Limits are 500 MB for videos and
-  100 MB for shorts.
+  that matches the declared type. Limits are 480 MiB for lesson videos
+  and 100 MiB for shorts.
 - **Attachments:** magic bytes are checked for PDF, images, DOCX and
   PPTX, up to 25 MB. Downloads are served as attachments with `nosniff`
   and a sandbox CSP.
@@ -700,10 +734,9 @@ means the platform should not go live without it.
 
 ## 13. Go-live checklist
 
-Application (blocker found by the 2026-09-26 infrastructure assessment):
-- [ ] **INF-1 fixed and released**: uploads larger than 10 MB currently
-      fail (INFRASTRUCTURE.md §0). Verify with a real > 10 MB video
-      upload and its playback.
+Application:
+- [ ] The deployed build includes the INF-1 fix (2026-09-27). Verify a
+      real > 10 MB video upload and its playback on the server.
 
 Owner / infrastructure (server sizing and full procedure:
 INFRASTRUCTURE.md):
@@ -732,7 +765,7 @@ Decisions:
 - [ ] Password-reset procedure agreed: teacher-issued links for students
       and parents, the operator script for the teacher (§6a), or add an
       email provider.
-- [ ] Teachers briefed: upload H.264/AAC MP4, ≤ ≈ 480 MB per video;
+- [ ] Teachers briefed: upload H.264/AAC MP4, ≤ 480 MiB per video;
       views are counted by the server.
 
 Verification:

@@ -29,6 +29,8 @@
 src/
   auth.ts / auth.config.ts   NextAuth setup (auth.ts adds the live DB session check)
   proxy.ts                   Route-level gate for /teacher, /parent, /student, /account
+                             (except upload Server Actions to /teacher/courses/<id> and
+                             /teacher/shorts, whose pages check the session themselves)
   lib/
     prisma.ts                Prisma client singleton
     rbac.ts                  requireRole/requireSession + error → HTTP mapping

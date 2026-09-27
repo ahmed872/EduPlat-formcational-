@@ -1,13 +1,13 @@
 # Project Status — EduPlat (Recorded-Only Educational Platform)
 
-Last updated: 2026-09-26 (infrastructure assessment)
+Last updated: 2026-09-27 (INF-1 fix and production revalidation)
 
-> **Status: NOT READY: application blocker INF-1 is open.** Uploads
-> larger than 10 MB fail, because the Next.js 16 proxy truncates the
-> request body at 10 MB. The fix is identified and verified in a scratch
-> clone, but not applied. See INFRASTRUCTURE.md §0 and
-> FINAL_AUDIT_REPORT.md → Production Readiness Assessment. Server
-> sizing and the deployment plan are in INFRASTRUCTURE.md.
+> **Status: READY AFTER OWNER INFRASTRUCTURE SETUP.** Blocker INF-1
+> (uploads over 10 MB failed) is fixed and verified with real uploads of
+> up to the 480 MiB maximum through nginx + TLS, with checksums, playback
+> and restart. See FINAL_AUDIT_REPORT.md → Production Readiness
+> Assessment. Server sizing and the deployment plan are in
+> INFRASTRUCTURE.md.
 
 ## Current phase
 
@@ -1592,9 +1592,22 @@ Release-candidate gate, final build (2026-09-26):
   the fresh install.
 
 Verdict at that gate: **READY AFTER OWNER INFRASTRUCTURE SETUP**.
-It is superseded by the infrastructure assessment, which found INF-1
-(uploads > 10 MB fail); current status: **NOT READY**
-(FINAL_AUDIT_REPORT.md).
+The infrastructure assessment found INF-1 (uploads > 10 MB failed) and
+set it to NOT READY. It was restored after the fix below.
+
+INF-1 fix and production revalidation (2026-09-27), all on the final
+production build:
+- Vitest 512/512 (47 files).
+- MUST FIX 32/32, journey 12/12, stress 10/10, original 26/26, CSRF
+  5/5, password 14/14, smoke 19/19, release gate 11/11, lifecycle leak
+  check pass.
+- TLS reverse proxy 9/9, including a new reset-limit regression step.
+- New real-upload E2E 35/35 through nginx + TLS: sizes 1 MiB to 480 MiB
+  with checksums, playback, restart, the attack matrix, concurrency and
+  leftover files.
+- Slow upload: 341.5 s, stored intact.
+- Log token scan: 0 tokens.
+- Guest proxy-bypass probe: no page data.
 
 Browser E2E on the final build of the go-live blocker round (2026-09-26):
 - MUST FIX 32/32, journey 12/12, stress 10/10, original 26/26, CSRF 5/5.

@@ -83,6 +83,25 @@ Two independent layers, both fail-closed:
      for the auth check is reachable without it.
    - Before 2026-09-26 the proxy trusted any signed JWT, and a blocked
      student's replayed navigation returned the page.
+   - **One exception (2026-09-27, INF-1):** Server Action requests (the
+     `next-action` header) to exactly `/teacher/courses/<id>` and
+     `/teacher/shorts` skip the proxy.
+     - Next 16 buffers every proxied body at 10 MB, which broke video,
+       short and attachment uploads.
+     - The header is client-controlled, and Next renders a page alongside
+       its layout, so the layout's redirect does not stop a page's data
+       from being sent. Measured with an unscoped bypass: a guest `GET`
+       carrying the header received the teacher course page's lesson
+       data.
+     - Both pages therefore check the session and role themselves before
+       reading anything.
+     - A guest probe of both pages (plain, RSC with a forged router tree,
+       bogus action POST, `.rsc`) returns only a redirect.
+     - `src/__tests__/proxy.test.ts` pins the matcher: every other
+       protected path still passes through the proxy with or without the
+       header.
+     - Do not widen this exception without adding the same page-level
+       check.
 2. Every server component, Server Action, and Route Handler under those
    trees re-checks the role itself via `requireRole()`/manual session checks
    (`src/lib/rbac.ts`) — proxy/middleware is treated as a UX convenience,
@@ -393,9 +412,15 @@ change.
   path **without query string**, route, digest, message), because signed
   playback and download tokens live in query strings. Headers and
   cookies are never logged. `/api/health` reports only ok/unavailable.
-  The reverse proxy must do the same. nginx's default access-log format
-  writes the full query string, including tokens (measured 2026-09-26),
-  so DEPLOYMENT.md §5 defines a `$uri`-only `log_format eduplat`.
+  The reverse proxy must do the same.
+  - nginx's default access-log format writes the full query string,
+    tokens included, and its error log writes the full request line on
+    upstream failures and rate-limit rejections.
+  - DEPLOYMENT.md §5 therefore defines a `$uri`-only `log_format
+    eduplat`, and gives the two signed-URL locations no error log.
+  - Measured 2026-09-27 under generated 2xx/4xx/5xx/429 traffic: 0 tokens
+    in the access, error and app logs, against 53 error-log entries
+    before the change.
 - **Error pages:** Arabic `error.tsx` / `global-error.tsx` /
   `not-found.tsx`. In production only a reference digest is shown, never
   the internal message.
@@ -404,9 +429,23 @@ change.
   - at most one open (pending or unexpired active) subscription per
     student and plan, enforced server-side under an advisory lock;
   - verified by replaying the real Server Action in parallel.
-- **Upload limits:** the Server Action body limit is 500 MB globally
-  (needed for video upload). The reverse proxy must enforce per-path
-  limits (DEPLOYMENT.md §5). Attachments are also capped at 25 MB in code.
+- **Upload limits:**
+  - Lesson videos are capped at 480 MiB in code, below the 500 MiB
+    Server Action body limit, which is global. Shorts are capped at
+    100 MiB and attachments at 25 MiB.
+  - The reverse proxy enforces per-path body limits (DEPLOYMENT.md §5).
+  - The video upload checks that the lesson belongs to the course named
+    in the request: the bound IDs arrive as plain, client-editable JSON.
+  - Files are written to a temporary name and renamed, so a failed write
+    leaves nothing.
+  - Parallel replacements of one lesson's video are serialized, so none
+    orphans a file.
+  - Verified 2026-09-27 with real uploads through nginx + TLS (1 MiB up
+    to 480 MiB − 64 KiB, checksums matched) and an attack matrix: guest,
+    student, parent and a signed-out teacher cookie; malformed or
+    mismatched IDs; extension, MIME and content spoofing; an empty file; a
+    foreign Origin; a traversal filename; over-maximum sizes. Every attack
+    was refused, and none wrote a file or changed a row.
 - **Rate limits:** in-app login throttling only. Registration,
   heartbeats and playback-URL issuance rely on proxy rate limits
   (DEPLOYMENT.md §5).
