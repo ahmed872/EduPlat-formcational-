@@ -6,13 +6,17 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import { getAttachmentStorageProvider, getVideoStorageProvider } from "@/lib/storage/provider";
-import { validateVideoUpload } from "@/lib/business/video-upload";
+import { replaceLessonVideoFile, validateVideoUpload } from "@/lib/business/video-upload";
 import { newAttachmentStorageKey, validateAttachmentFile } from "@/lib/business/attachments";
 import { setContentStatus, type ContentKind } from "@/lib/business/content-status";
 import type { ContentStatus, ExperimentType } from "@prisma/client";
 import { buildExperimentConfig } from "@/lib/experiments/definitions";
 
-const MAX_VIDEO_BYTES = 500 * 1024 * 1024; // 500MB — matches next.config.ts server action body limit
+// 480 MiB: the Server Action body limit (next.config.ts) is 500 MiB for the
+// whole multipart request. Capping the file below it leaves room for the
+// form's other fields, and a file just under 500 MiB gets this action's
+// message instead of Next's generic body-limit error.
+const MAX_VIDEO_BYTES = 480 * 1024 * 1024;
 
 export async function createCourse(formData: FormData) {
   const session = await auth();
@@ -117,12 +121,15 @@ export async function uploadLessonVideo(
   const session = await auth();
   requireRole(session, ["TEACHER_ADMIN"]);
 
+  const lesson = await prisma.lesson.findFirst({ where: { id: lessonId, courseId }, select: { id: true } });
+  if (!lesson) throw new Error("الدرس غير موجود في هذا الكورس");
+
   const file = formData.get("video");
   if (!(file instanceof File) || file.size === 0) {
     throw new Error("الرجاء اختيار ملف فيديو");
   }
   const buffer = Buffer.from(await file.arrayBuffer());
-  const ext = validateVideoUpload({ type: file.type, size: file.size, bytes: buffer }, MAX_VIDEO_BYTES, "500 ميجابايت");
+  const ext = validateVideoUpload({ type: file.type, size: file.size, bytes: buffer }, MAX_VIDEO_BYTES, "480 ميجابايت");
 
   const title = String(formData.get("title") ?? "").trim();
   const durationSeconds = Number(formData.get("durationSeconds") ?? 0);
@@ -132,45 +139,27 @@ export async function uploadLessonVideo(
   }
 
   const storage = getVideoStorageProvider();
-  const existing = await prisma.video.findUnique({ where: { lessonId } });
   const storageKey = storage.generateKey(`video${ext}`);
   await storage.save(storageKey, buffer);
 
+  let replacedKey: string | null;
   try {
-    if (existing) {
-      // Point the row at the new file first; the old file is removed only
-      // once nothing references it (a failed update keeps the old video).
-      // Replacing the file keeps the video's status: a draft or archived
-      // video must not become visible just because its file changed.
-      await prisma.video.update({
-        where: { id: existing.id },
-        data: {
-          title,
-          storageProvider: storage.name,
-          storageKey,
-          durationSeconds,
-          isFree,
-        },
-      });
-    } else {
-      await prisma.video.create({
-        data: {
-          lessonId,
-          title,
-          storageProvider: storage.name,
-          storageKey,
-          durationSeconds,
-          isFree,
-          status: "PUBLISHED",
-        },
-      });
-    }
+    // The old file is removed only once nothing references it (a failed
+    // update keeps the old video).
+    replacedKey = await replaceLessonVideoFile(prisma, {
+      lessonId,
+      storageProvider: storage.name,
+      storageKey,
+      title,
+      durationSeconds,
+      isFree,
+    });
   } catch (error) {
     await storage.delete(storageKey);
     throw error;
   }
-  if (existing && existing.storageKey !== storageKey) {
-    await storage.delete(existing.storageKey);
+  if (replacedKey && replacedKey !== storageKey) {
+    await storage.delete(replacedKey);
   }
 
   revalidatePath(`/teacher/courses/${courseId}`);

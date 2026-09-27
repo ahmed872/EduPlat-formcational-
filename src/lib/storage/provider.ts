@@ -50,7 +50,18 @@ class LocalPrivateStorageProvider implements StorageProvider {
   async save(key: string, data: Buffer): Promise<void> {
     // Owner-only: other OS users on the host must not read paid content.
     await fsp.mkdir(this.root, { recursive: true, mode: 0o700 });
-    await fsp.writeFile(this.resolvePath(key), data, { mode: 0o600 });
+    // Write under a temporary name in the same directory, then rename: the
+    // key only ever names a complete file, and a failed write (disk full,
+    // crash) leaves nothing behind.
+    const target = this.resolvePath(key);
+    const temp = `${target}.${randomUUID()}.partial`;
+    try {
+      await fsp.writeFile(temp, data, { mode: 0o600, flag: "wx" });
+      await fsp.rename(temp, target);
+    } catch (error) {
+      await fsp.rm(temp, { force: true });
+      throw error;
+    }
   }
 
   async getSize(key: string): Promise<number> {

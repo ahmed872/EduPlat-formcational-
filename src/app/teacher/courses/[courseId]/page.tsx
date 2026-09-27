@@ -1,4 +1,5 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import {
   addVideoChapter,
@@ -20,6 +21,15 @@ export default async function CourseDetailPage({
 }: {
   params: Promise<{ courseId: string }>;
 }) {
+  // Required, not just defense in depth: this page's upload Server Actions
+  // skip proxy.ts (see its matcher), and Next renders the page alongside
+  // the layout, so the layout's redirect alone would not stop this page's
+  // data from being sent. Check before reading anything.
+  const session = await auth();
+  if (!session?.user || session.user.role !== "TEACHER_ADMIN") {
+    redirect("/login");
+  }
+
   const { courseId } = await params;
   const course = await prisma.course.findUnique({
     where: { id: courseId },

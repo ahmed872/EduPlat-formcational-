@@ -26,7 +26,8 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       // Lesson videos are uploaded via a Server Action; raise the default
-      // body limit so a real (if modest) video file doesn't get rejected.
+      // body limit for the whole multipart request. The video file itself
+      // is capped at 480 MiB in uploadLessonVideo, below this limit.
       // This limit applies to every Server Action, so production must also
       // cap request bodies per path at the reverse proxy (see DEPLOYMENT.md).
       // A deployment behind a real object-storage provider would instead

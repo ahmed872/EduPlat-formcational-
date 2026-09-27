@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { prisma } from "@/lib/prisma";
 import { resetDatabase } from "@/test/reset-db";
 import { createStudent, createTeacher } from "@/test/factories";
 import { sessionCookieFor } from "@/test/session";
-import proxy from "@/proxy";
+import proxy, { config } from "@/proxy";
 import { revokeSession } from "@/lib/business/session-validity";
 
 beforeEach(async () => {
@@ -75,5 +76,43 @@ describe("proxy: live session check on every protected request", () => {
     expect(new URL((await visit("/teacher")).location!).pathname).toBe("/login");
     // Prefix matching is exact: /accountant is not /account.
     expect((await visit("/accountant")).status).toBe(200);
+  });
+});
+
+describe("proxy matcher: which requests skip the proxy", () => {
+  // Uses Next's own matcher evaluation. Regression: uploads over 10 MB failed
+  // because proxy buffers bodies at 10 MB. Only Server Action requests to the
+  // two upload pages may skip proxy; those pages check the session themselves.
+  const action = { "next-action": "0123abcd" };
+  const matches = (url: string, headers?: Record<string, string>) =>
+    unstable_doesMiddlewareMatch({ config, url, headers });
+
+  it("skips proxy only for Server Action requests to the two upload pages", () => {
+    expect(matches("/teacher/courses/abc", action)).toBe(false);
+    expect(matches("/teacher/shorts", action)).toBe(false);
+    // The same pages without the header (page loads, navigations) still pass.
+    expect(matches("/teacher/courses/abc")).toBe(true);
+    expect(matches("/teacher/shorts")).toBe(true);
+  });
+
+  it("keeps every other protected path behind proxy, with or without the header", () => {
+    for (const url of [
+      "/teacher",
+      "/teacher/courses",
+      "/teacher/courses/abc/extra",
+      "/teacher/shorts/abc",
+      "/teacher/shortsx",
+      "/teacher/payments",
+      "/teacher/accounts",
+      "/parent",
+      "/parent/reports",
+      "/student",
+      "/student/courses/abc",
+      "/account/password",
+    ]) {
+      expect(matches(url), url).toBe(true);
+      expect(matches(url, action), `${url} + next-action`).toBe(true);
+    }
+    expect(matches("/accountant", action)).toBe(false);
   });
 });

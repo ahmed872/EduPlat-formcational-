@@ -1,7 +1,18 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { toggleShortStatus, uploadShort } from "./actions";
 
 export default async function TeacherShortsPage() {
+  // Required, not just defense in depth: the upload Server Action skips
+  // proxy.ts (see its matcher), and Next renders the page alongside the
+  // layout, so the layout's redirect alone would not stop this page's data
+  // from being sent. Check before reading anything.
+  const session = await auth();
+  if (!session?.user || session.user.role !== "TEACHER_ADMIN") {
+    redirect("/login");
+  }
+
   const [shorts, videos] = await Promise.all([
     prisma.short.findMany({
       include: { sourceVideo: { include: { lesson: true } } },

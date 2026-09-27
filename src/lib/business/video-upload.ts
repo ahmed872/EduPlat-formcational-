@@ -1,3 +1,5 @@
+import type { PrismaClient } from "@prisma/client";
+
 /**
  * Server-side check of an uploaded video: the browser-declared type must be
  * an allowed one AND the bytes must start like a real MP4/QuickTime (ISO
@@ -34,4 +36,39 @@ export function validateVideoUpload(file: { type: string; size: number; bytes: U
     throw new Error("نوع الملف المعلن لا يطابق محتواه");
   }
   return ext;
+}
+
+/**
+ * Points a lesson's Video row at a newly stored file (creating the row for a
+ * lesson's first video) and returns the storage key it pointed to before,
+ * which the caller deletes once this has committed. Uploads for the same
+ * lesson are serialized, so the key returned is always the one this upload
+ * replaced: parallel replacements can't leave an unreferenced file behind,
+ * and two first uploads can't collide on the one-video-per-lesson rule.
+ * Replacing the file keeps the video's id (entitlements name it) and its
+ * status: a draft or archived video must not become visible because its
+ * file changed.
+ */
+export async function replaceLessonVideoFile(
+  prisma: PrismaClient,
+  params: {
+    lessonId: string;
+    storageProvider: string;
+    storageKey: string;
+    title: string;
+    durationSeconds: number;
+    isFree: boolean;
+  },
+): Promise<string | null> {
+  const { lessonId, ...file } = params;
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`video-upload:${lessonId}`}))`;
+    const existing = await tx.video.findUnique({ where: { lessonId }, select: { id: true, storageKey: true } });
+    if (existing) {
+      await tx.video.update({ where: { id: existing.id }, data: file });
+      return existing.storageKey;
+    }
+    await tx.video.create({ data: { lessonId, ...file, status: "PUBLISHED" } });
+    return null;
+  });
 }
